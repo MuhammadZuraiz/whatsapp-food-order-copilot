@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-food-order-ai-copilot",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first AI copilot foundation for WhatsApp Business food-order workflows.",
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=22.13.0",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @wfo/api --filter @wfo/dashboard dev",
+    "dev:api": "pnpm --filter @wfo/api dev",
+    "dev:dashboard": "pnpm --filter @wfo/dashboard dev",
+    "build": "pnpm -r build",
+    "build:api": "pnpm --filter @wfo/api build",
+    "build:dashboard": "pnpm --filter @wfo/dashboard build",
+    "build:extension": "pnpm --filter @wfo/extension build",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
