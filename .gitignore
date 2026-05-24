@@ -5,3 +5,5 @@ dist/
 .DS_Store
 *.log
 coverage/
+apps/api/prisma/*.db
+apps/api/prisma/*.db-journal

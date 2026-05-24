@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id              String         @id @default(cuid())
+  displayName     String
+  phoneHash       String?
+  phoneRaw        String?
+  profileSummary  String?
+  usualAddress    String?
+  preferencesJson String?
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  conversations   Conversation[]
+  orders          Order[]
+  customerNotes   CustomerNote[]
+
+  @@index([displayName])
+  @@map("customers")
+}
+
+model Conversation {
+  id               String           @id @default(cuid())
+  customerId       String?
+  source           String
+  whatsappChatName String?
+  lastMessageAt    DateTime?
+  summary          String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  customer         Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  messages         Message[]
+  orders           Order[]
+  suggestedReplies SuggestedReply[]
+
+  @@index([customerId])
+  @@index([source])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderType     String
+  senderName     String?
+  messageText    String
+  timestamp      DateTime?
+  source         String
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([timestamp])
+  @@map("messages")
+}
+
+model Product {
+  id                 String   @id @default(cuid())
+  name               String
+  category           String?
+  price              Float?
+  description        String?
+  availabilityJson   String?
+  customOptionsJson  String?
+  minimumNoticeHours Int?
+  isActive           Boolean  @default(true)
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([name])
+  @@index([category])
+  @@index([isActive])
+  @@map("products")
+}
+
+model Order {
+  id                 String           @id @default(cuid())
+  customerId         String?
+  conversationId     String?
+  status             String
+  itemsJson          String?
+  deliveryDate       DateTime?
+  deliveryTime       String?
+  address            String?
+  paymentMethod      String?
+  paymentStatus      String?
+  customRequestsJson String?
+  missingFieldsJson  String?
+  summary            String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  customer           Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  conversation       Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  suggestedReplies   SuggestedReply[]
+
+  @@index([customerId])
+  @@index([conversationId])
+  @@index([status])
+  @@index([deliveryDate])
+  @@map("orders")
+}
+
+model SuggestedReply {
+  id             String        @id @default(cuid())
+  conversationId String?
+  orderId        String?
+  replyText      String
+  replyType      String?
+  reason         String?
+  wasInserted    Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order          Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([orderId])
+  @@map("suggested_replies")
+}
+
+model CustomerNote {
+  id         String   @id @default(cuid())
+  customerId String
+  note       String
+  createdAt  DateTime @default(now())
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_notes")
+}
+
+model BrandStyleProfile {
+  id                 String   @id @default(cuid())
+  toneSummary        String?
+  commonPhrasesJson  String?
+  doRulesJson        String?
+  dontRulesJson      String?
+  exampleRepliesJson String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("brand_style_profiles")
+}

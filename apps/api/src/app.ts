@@ -1,5 +1,10 @@
 import express from "express";
 import type { AppHealth } from "@wfo/shared";
+import {
+  errorHandler,
+  notFoundHandler
+} from "./middleware/errorHandler.js";
+import { apiRoutes } from "./routes/index.js";
 
 export function createApp() {
   const app = express();
@@ -15,6 +20,10 @@ export function createApp() {
 
     response.status(200).json(health);
   });
+
+  app.use("/api", apiRoutes);
+  app.use(notFoundHandler);
+  app.use(errorHandler);
 
   return app;
 }
