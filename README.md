@@ -2,12 +2,13 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 2 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, and a manual chat analyzer for pasted WhatsApp exports.
+This repository currently includes the Milestone 3 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, and a backend AI provider abstraction with a mock provider.
 
 ## What Is Included
 
 - `apps/api`: Node.js, Express, TypeScript API with `GET /health`
 - `apps/api/prisma`: Prisma schema for the local SQLite database
+- `apps/api/src/ai`: AI provider abstraction, mock provider, OpenAI-compatible provider, and task service
 - `apps/api/src/modules/chat`: manual paste parser, rule extractor, and suggested reply templates
 - `apps/dashboard`: React, Vite, Tailwind manual chat analyzer page
 - `apps/extension`: Chrome Manifest V3 extension shell
@@ -17,7 +18,7 @@ This repository currently includes the Milestone 2 foundation: the monorepo, app
 ## Not Implemented Yet
 
 - WhatsApp scraping or DOM reading
-- AI provider integration
+- AI-powered Manual Chat Analyzer
 - AI reply generation
 - analytics dashboard
 - automatic WhatsApp message insertion
@@ -69,6 +70,23 @@ Create the initial SQLite migration:
 pnpm --filter @wfo/api prisma migrate dev --name init
 ```
 
+The AI layer defaults to the zero-cost mock provider:
+
+```env
+AI_PROVIDER=mock
+```
+
+To try a free-tier OpenAI-compatible provider later, set these in `apps/api/.env`:
+
+```env
+AI_PROVIDER=openai-compatible
+AI_API_KEY=your-api-key
+AI_BASE_URL=https://provider.example.com/v1
+AI_MODEL=provider-model-name
+```
+
+`AI_BASE_URL` should point at an OpenAI-compatible API base. The backend appends `/chat/completions` unless the URL already ends with that path.
+
 ## Run During Development
 
 Run the API:
@@ -101,6 +119,8 @@ The dashboard runs on `http://localhost:5173` by default.
 
 Open the dashboard and use the Manual Chat Analyzer to paste an exported WhatsApp chat. The dashboard calls the API at `POST /api/chat/analyze-manual` and saves parsed messages plus any likely draft order data locally.
 
+Milestone 3 does not make this analyzer AI-powered yet. It still uses the deterministic rule-based parser and extractor from Milestone 2.
+
 Run both API and dashboard:
 
 ```sh
@@ -126,6 +146,7 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 ## API Routes
 
 - `GET /health`
+- `POST /api/ai/test`
 - `POST /api/chat/analyze-manual`
 - `GET /api/products`
 - `POST /api/products`
@@ -140,6 +161,41 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 - `PATCH /api/orders/:id`
 
 Request bodies are validated with Zod. Invalid request bodies return `400`; missing records return `404`.
+
+## AI Test Endpoint
+
+The AI foundation can be tested without API keys because `AI_PROVIDER=mock` is the default.
+
+PowerShell example:
+
+```powershell
+$body = @{
+  task = "classifyIntent"
+  text = "Hi, can I order 2 biryani boxes for tomorrow dinner?"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://localhost:4000/api/ai/test -ContentType "application/json" -Body $body
+```
+
+Expected output includes:
+
+```json
+{
+  "provider": "mock",
+  "result": {
+    "intent": "new_order",
+    "orderLikely": true
+  }
+}
+```
+
+Other supported test tasks:
+
+- `extractOrder`
+- `generateSuggestedReplies`
+- `analyzeBrandStyle`
+
+The task service also includes `updateCustomerMemory()` for later wiring, but it is not exposed through the test endpoint in this milestone.
 
 ## Manual Chat Analyzer Sample
 
