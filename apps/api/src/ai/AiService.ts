@@ -57,17 +57,13 @@ const memoryFallback: CustomerMemoryUpdateResult = {
 };
 
 const suggestedRepliesFallback: AiSuggestedRepliesResult = {
-  suggestedReplies: [
+  suggestions: [
     {
       text: "Sure, I can help. Please confirm the delivery date and time.",
       type: "clarifying_question",
       reason: "Safe fallback reply for a scheduled delivery workflow."
     }
-  ],
-  safety: {
-    requiresHumanApproval: true,
-    autoSendAllowed: false
-  }
+  ]
 };
 
 const brandStyleFallback: BrandStyleAnalysisResult = {
@@ -207,9 +203,10 @@ export class AiService {
           "Prefer clarifying questions for missing order fields.",
           "Do not sound like the order is confirmed while required fields are missing.",
           "Do not say payment is confirmed unless the business explicitly confirmed payment.",
-          "Return JSON with: suggestedReplies and safety.",
-          "Each suggested reply needs text, type, and reason.",
-          "Safety must be { requiresHumanApproval: true, autoSendAllowed: false }."
+          "Return JSON only. No markdown. No explanation outside JSON.",
+          "Return exactly this JSON shape: { \"suggestions\": [{ \"text\": \"...\", \"type\": \"clarifying_question\", \"reason\": \"...\" }] }.",
+          "Every suggestion must include text, type, and reason.",
+          "Use only these type values: clarifying_question, confirmation, menu_response, payment_followup, complaint_response, delivery_update, general."
         ].join("\n"),
         text
       ),

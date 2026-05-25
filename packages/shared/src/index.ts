@@ -50,6 +50,8 @@ export const suggestedReplyTypeSchema = z.enum([
   "confirmation",
   "menu_response",
   "payment_followup",
+  "complaint_response",
+  "delivery_update",
   "general"
 ]);
 

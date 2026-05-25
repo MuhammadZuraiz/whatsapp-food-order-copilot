@@ -228,7 +228,30 @@ function missingFieldsFromPrompt(text: string) {
   const match = text.match(/Missing fields:\s*([^\n]+)/i);
 
   if (!match || match[1].trim().toLocaleLowerCase() === "none") {
-    return [];
+    const inferredFields: string[] = [];
+    const normalizedText = text.toLocaleLowerCase();
+
+    if (/\baddress is missing|missing address|address missing\b/.test(normalizedText)) {
+      inferredFields.push("address");
+    }
+
+    if (/\bpayment method is missing|missing payment method|payment method missing\b/.test(normalizedText)) {
+      inferredFields.push("paymentMethod");
+    }
+
+    if (/\bpayment status is missing|missing payment status|payment status missing\b/.test(normalizedText)) {
+      inferredFields.push("paymentStatus");
+    }
+
+    if (/\bdate is missing|missing date|delivery date missing\b/.test(normalizedText)) {
+      inferredFields.push("deliveryDate");
+    }
+
+    if (/\btime is missing|missing time|delivery time missing\b/.test(normalizedText)) {
+      inferredFields.push("deliveryTime");
+    }
+
+    return inferredFields;
   }
 
   return match[1]
@@ -327,11 +350,7 @@ export class MockProvider implements AiProvider {
 
     if (task === "generateSuggestedReplies") {
       return JSON.stringify({
-        suggestedReplies: suggestedRepliesForPrompt(userText),
-        safety: {
-          requiresHumanApproval: true,
-          autoSendAllowed: false
-        }
+        suggestions: suggestedRepliesForPrompt(userText)
       });
     }
 

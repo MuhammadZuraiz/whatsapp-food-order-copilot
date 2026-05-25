@@ -127,18 +127,42 @@ function chooseIntent(
   return aiIntent;
 }
 
-function isUnsafeConfirmation(reply: SuggestedReplyDto, missingFields: string[]) {
-  return (
-    missingFields.length > 0 &&
+function isUnsafeConfirmation(
+  reply: SuggestedReplyDto,
+  order: ManualChatOrderAnalysis
+) {
+  const isFinalConfirmation =
     /\b(confirmed|finalized|booked|all set|your order is confirmed|order confirmed)\b/i.test(
       reply.text
-    )
+    );
+
+  if (!isFinalConfirmation) {
+    return false;
+  }
+
+  return (
+    order.missingFields.length > 0 || order.paymentStatus !== "paid_confirmed"
   );
 }
 
-function asksForResolvedField(reply: SuggestedReplyDto, missingFields: string[]) {
+function asksForResolvedField(
+  reply: SuggestedReplyDto,
+  order: ManualChatOrderAnalysis
+) {
+  const missingFields = order.missingFields;
   const missing = new Set(missingFields);
   const text = reply.text.toLocaleLowerCase();
+  const onlyPaymentStatusMissing =
+    missingFields.length === 1 && missing.has("paymentStatus");
+
+  if (
+    onlyPaymentStatusMissing &&
+    !/\b(payment|pay|paid|proof|receipt|screenshot|confirm|transfer|cash|card)\b/.test(
+      text
+    )
+  ) {
+    return true;
+  }
 
   if (
     !missing.has("deliveryDate") &&
@@ -184,22 +208,29 @@ function sanitizeAiReplies(
   analysisWithoutReplies: AnalysisWithoutReplies
 ) {
   const templateReplies = buildSuggestedReplies(analysisWithoutReplies);
-  const missingFields = analysisWithoutReplies.order.missingFields;
-  const replies: SuggestedReplyDto[] =
-    missingFields.length > 0 ? templateReplies.slice(0, 1) : [];
+  const safeAiReplies: SuggestedReplyDto[] = [];
 
   for (const reply of aiReplies) {
     if (
-      replies.length >= 3 ||
-      isUnsafeConfirmation(reply, missingFields) ||
-      asksForResolvedField(reply, missingFields) ||
-      replies.some((existingReply) => existingReply.text === reply.text)
+      safeAiReplies.length >= 3 ||
+      isUnsafeConfirmation(reply, analysisWithoutReplies.order) ||
+      asksForResolvedField(reply, analysisWithoutReplies.order) ||
+      safeAiReplies.some((existingReply) => existingReply.text === reply.text)
     ) {
       continue;
     }
 
-    replies.push(reply);
+    safeAiReplies.push(reply);
   }
+
+  if (safeAiReplies.length === 0) {
+    return {
+      suggestedReplies: templateReplies,
+      usedTemplateFallback: true
+    };
+  }
+
+  const replies = [...safeAiReplies];
 
   for (const reply of templateReplies) {
     if (
@@ -212,7 +243,10 @@ function sanitizeAiReplies(
     replies.push(reply);
   }
 
-  return replies;
+  return {
+    suggestedReplies: replies,
+    usedTemplateFallback: false
+  };
 }
 
 async function runAiTask<T>(
@@ -346,11 +380,24 @@ export async function buildAiAssistedAnalysis(
     };
   }
 
+  const safeReplies = sanitizeAiReplies(
+    repliesTask.value.suggestions,
+    analysisWithoutReplies
+  );
+
+  if (safeReplies.usedTemplateFallback) {
+    return {
+      ...analysisWithoutReplies,
+      warnings: [
+        ...analysisWithoutReplies.warnings,
+        "AI suggested replies were unsafe or incomplete; template replies used."
+      ],
+      suggestedReplies: safeReplies.suggestedReplies
+    };
+  }
+
   return {
     ...analysisWithoutReplies,
-    suggestedReplies: sanitizeAiReplies(
-      repliesTask.value.suggestedReplies,
-      analysisWithoutReplies
-    )
+    suggestedReplies: safeReplies.suggestedReplies
   };
 }

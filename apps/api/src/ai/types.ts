@@ -39,8 +39,12 @@ export const aiSuggestedReplyTypeSchema = z.enum([
   "confirmation",
   "menu_response",
   "payment_followup",
+  "complaint_response",
+  "delivery_update",
   "general"
 ]);
+
+const allowedSuggestedReplyTypes = aiSuggestedReplyTypeSchema.options;
 
 export const intentClassificationResultSchema = z.object({
   intent: aiIntentSchema,
@@ -88,19 +92,122 @@ export const customerMemoryUpdateResultSchema = z
   })
   .passthrough();
 
-export const aiSuggestedRepliesResultSchema = z.object({
-  suggestedReplies: z.array(
-    z.object({
-      text: z.string(),
-      type: aiSuggestedReplyTypeSchema,
-      reason: z.string()
-    })
-  ),
-  safety: z.object({
-    requiresHumanApproval: z.literal(true),
-    autoSendAllowed: z.literal(false)
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textFromUnknown(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function inferSuggestedReplyType(
+  text: string,
+  reason: string
+): z.infer<typeof aiSuggestedReplyTypeSchema> {
+  const combinedText = `${text} ${reason}`.toLocaleLowerCase();
+
+  if (/\b(payment|pay|cash|card|transfer|paid|proof|receipt|screenshot)\b/.test(combinedText)) {
+    return "payment_followup";
+  }
+
+  if (/\b(address|date|time|quantity|how many|confirm|please confirm)\b/.test(combinedText)) {
+    return "clarifying_question";
+  }
+
+  if (/\b(menu|items?|available|availability|options)\b/.test(combinedText)) {
+    return "menu_response";
+  }
+
+  if (/\b(sorry|issue|complaint|delay|late|problem)\b/.test(combinedText)) {
+    return "complaint_response";
+  }
+
+  if (/\b(delivery update|driver|on the way|arriving|delivered)\b/.test(combinedText)) {
+    return "delivery_update";
+  }
+
+  return "general";
+}
+
+function normalizeSuggestedReply(value: unknown) {
+  if (typeof value === "string") {
+    const text = value.trim();
+
+    return text
+      ? {
+          text,
+          type: inferSuggestedReplyType(text, ""),
+          reason: "AI-generated suggestion."
+        }
+      : null;
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const text = textFromUnknown(value.text);
+
+  if (!text) {
+    return null;
+  }
+
+  const reason =
+    textFromUnknown(value.reason) || "AI-generated suggestion.";
+  const providedType = textFromUnknown(value.type);
+  const type = allowedSuggestedReplyTypes.includes(
+    providedType as (typeof allowedSuggestedReplyTypes)[number]
+  )
+    ? (providedType as z.infer<typeof aiSuggestedReplyTypeSchema>)
+    : inferSuggestedReplyType(text, reason);
+
+  return {
+    text,
+    type,
+    reason
+  };
+}
+
+function getRawSuggestions(value: unknown) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  for (const key of ["suggestions", "suggestedReplies", "replies"]) {
+    const rawSuggestions = value[key];
+
+    if (Array.isArray(rawSuggestions)) {
+      return rawSuggestions;
+    }
+  }
+
+  return [];
+}
+
+export const aiSuggestedRepliesResultSchema = z.preprocess(
+  (value) => ({
+    suggestions: getRawSuggestions(value)
+      .map(normalizeSuggestedReply)
+      .filter((reply): reply is NonNullable<ReturnType<typeof normalizeSuggestedReply>> => reply !== null)
+      .slice(0, 3)
+  }),
+  z.object({
+    suggestions: z
+      .array(
+        z.object({
+          text: z.string().trim().min(1),
+          type: aiSuggestedReplyTypeSchema,
+          reason: z.string().trim().min(1)
+        })
+      )
+      .min(1)
+      .max(3)
   })
-});
+);
 
 export const brandStyleAnalysisResultSchema = z.object({
   toneSummary: z.string(),
