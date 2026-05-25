@@ -82,15 +82,20 @@ function OrderSummary({
             Intent: {formatLabel(result.analysis.intent)}
           </p>
         </div>
-        <span
-          className={`rounded-md px-2 py-1 text-xs font-medium ${
-            result.analysis.orderLikely
-              ? "bg-emerald-400 text-emerald-950"
-              : "bg-neutral-700 text-neutral-100"
-          }`}
-        >
-          {result.analysis.orderLikely ? "Order likely" : "Inquiry"}
-        </span>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-md bg-sky-300 px-2 py-1 text-xs font-medium text-sky-950">
+            {formatLabel(result.analysis.source)}
+          </span>
+          <span
+            className={`rounded-md px-2 py-1 text-xs font-medium ${
+              result.analysis.orderLikely
+                ? "bg-emerald-400 text-emerald-950"
+                : "bg-neutral-700 text-neutral-100"
+            }`}
+          >
+            {result.analysis.orderLikely ? "Order likely" : "Inquiry"}
+          </span>
+        </div>
       </div>
 
       <dl className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -124,6 +129,11 @@ function OrderSummary({
             {order.paymentMethod ?? "Missing"} /{" "}
             {formatLabel(order.paymentStatus)}
           </dd>
+          {order.paymentInquiryDetected ? (
+            <dd className="mt-1 text-xs text-amber-200">
+              Payment question detected; method not selected yet.
+            </dd>
+          ) : null}
         </div>
         <div>
           <dt className="text-xs uppercase text-neutral-500">Custom Requests</dt>
@@ -147,6 +157,15 @@ function OrderSummary({
       </p>
     </section>
   );
+}
+
+function CustomerSummary({ summary }: { summary: string | null }) {
+  return summary ? (
+    <section className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+      <h2 className="text-lg font-semibold">Customer Summary</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-300">{summary}</p>
+    </section>
+  ) : null;
 }
 
 function MissingFields({ fields }: { fields: string[] }) {
@@ -200,7 +219,7 @@ function SuggestedReplies({ replies }: { replies: SuggestedReplyDto[] }) {
 function WarningList({ warnings }: { warnings: string[] }) {
   return (
     <section className="rounded-md border border-white/10 bg-white/[0.04] p-4">
-      <h2 className="text-lg font-semibold">Parser Warnings</h2>
+      <h2 className="text-lg font-semibold">Warnings</h2>
       <div className="mt-3 grid gap-2">
         {warnings.length > 0 ? (
           warnings.map((warning) => (
@@ -218,8 +237,10 @@ function WarningList({ warnings }: { warnings: string[] }) {
 
 export function ManualChatAnalyzer() {
   const [chatName, setChatName] = useState("Sample Customer");
+  const [customerKey, setCustomerKey] = useState("");
   const [businessNames, setBusinessNames] = useState(defaultBusinessNames);
   const [rawText, setRawText] = useState(sampleChat);
+  const [useAi, setUseAi] = useState(true);
   const [result, setResult] = useState<ManualChatAnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -241,8 +262,10 @@ export function ManualChatAnalyzer() {
     try {
       const response = await analyzeManualChat({
         chatName,
+        customerKey: customerKey.trim() || undefined,
         businessSenderNames: parsedBusinessNames,
-        rawText
+        rawText,
+        useAi
       });
 
       setResult(response);
@@ -263,7 +286,7 @@ export function ManualChatAnalyzer() {
         <section className="rounded-md border border-white/10 bg-white/[0.04] p-4 lg:sticky lg:top-6 lg:h-fit">
           <div className="border-b border-white/10 pb-4">
             <p className="text-sm font-medium uppercase text-emerald-300">
-              Milestone 2
+              Milestone 4
             </p>
             <h1 className="mt-2 text-2xl font-semibold leading-tight">
               Manual Chat Analyzer
@@ -292,6 +315,30 @@ export function ManualChatAnalyzer() {
                 onChange={(event) => setBusinessNames(event.target.value)}
                 required
                 value={businessNames}
+              />
+            </label>
+
+            <label className="grid gap-2">
+              <span className="text-sm font-medium text-neutral-200">
+                Customer key or phone
+              </span>
+              <input
+                className="rounded-md border border-white/10 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none transition focus:border-emerald-300"
+                onChange={(event) => setCustomerKey(event.target.value)}
+                placeholder="Optional stable customer identifier"
+                value={customerKey}
+              />
+            </label>
+
+            <label className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-neutral-950 px-3 py-2">
+              <span className="text-sm font-medium text-neutral-200">
+                Use AI assistance
+              </span>
+              <input
+                checked={useAi}
+                className="h-4 w-4 accent-emerald-300"
+                onChange={(event) => setUseAi(event.target.checked)}
+                type="checkbox"
               />
             </label>
 
@@ -327,6 +374,7 @@ export function ManualChatAnalyzer() {
           {result ? (
             <>
               <OrderSummary result={result} />
+              <CustomerSummary summary={result.analysis.customerSummary} />
               <MissingFields fields={result.analysis.order.missingFields} />
               <SuggestedReplies replies={result.analysis.suggestedReplies} />
               <WarningList warnings={result.analysis.warnings} />

@@ -53,24 +53,6 @@ function classifyIntent(text: string) {
     };
   }
 
-  if (/\bmenu|options|catalog\b/.test(normalized)) {
-    return {
-      intent: "menu_request",
-      confidence: 0.86,
-      orderLikely: false,
-      reason: "The customer is asking for available menu options."
-    };
-  }
-
-  if (/\bprice|cost|how much|rate\b/.test(normalized)) {
-    return {
-      intent: "price_question",
-      confidence: 0.8,
-      orderLikely: false,
-      reason: "The text asks about pricing."
-    };
-  }
-
   if (/\bpaid|payment|transfer|cash|card|receipt|screenshot\b/.test(normalized)) {
     return {
       intent: "payment_question",
@@ -89,6 +71,24 @@ function classifyIntent(text: string) {
     };
   }
 
+  if (/\bmenu|options|catalog\b/.test(normalized)) {
+    return {
+      intent: "menu_request",
+      confidence: 0.86,
+      orderLikely: false,
+      reason: "The customer is asking for available menu options."
+    };
+  }
+
+  if (/\bprice|cost|how much|rate\b/.test(normalized)) {
+    return {
+      intent: "price_question",
+      confidence: 0.8,
+      orderLikely: false,
+      reason: "The text asks about pricing."
+    };
+  }
+
   return {
     intent: "general_question",
     confidence: 0.64,
@@ -100,6 +100,14 @@ function classifyIntent(text: string) {
 function extractOrder(text: string) {
   const normalized = text.toLocaleLowerCase();
   const hasTwo = /\b2\b|\btwo\b/.test(normalized);
+  const paymentInquiryDetected =
+    /\b(what|which|how|do you|can i|can we).{0,60}\b(payment|pay|cash|card|transfer|methods?|options?|accept)\b/i.test(
+      text
+    ) || /\b(payment methods?|payment options?|how should i pay)\b/i.test(text);
+  const paymentSelectionDetected =
+    /\b(i can pay|i will pay|i'll pay|i would like to pay|pay by|pay via|cash is fine|cash works|transfer is fine|bank transfer is fine|card is fine|i prefer)\b/i.test(
+      text
+    );
   const items = [];
 
   if (/\bbiryani\b/.test(normalized)) {
@@ -123,13 +131,16 @@ function extractOrder(text: string) {
   const addressMatch = text.match(
     /\b(address|location)\b[^\n.]*(?:[.\n]|$)/i
   );
-  const paymentMethod = /\bbank transfer|transfer\b/.test(normalized)
-    ? "bank_transfer"
-    : /\bcash\b/.test(normalized)
-      ? "cash"
-      : /\bcard\b/.test(normalized)
-        ? "card"
-        : null;
+  const paymentMethod =
+    paymentInquiryDetected && !paymentSelectionDetected
+      ? null
+      : /\bbank transfer|transfer\b/.test(normalized)
+        ? "bank_transfer"
+        : /\bcash\b/.test(normalized)
+          ? "cash"
+          : /\bcard\b/.test(normalized)
+            ? "card"
+            : null;
   const paymentStatus = /\bpaid|transferred|screenshot|receipt\b/.test(
     normalized
   )
@@ -158,6 +169,7 @@ function extractOrder(text: string) {
     address: addressMatch?.[0].trim() ?? null,
     paymentMethod,
     paymentStatus,
+    paymentInquiryDetected,
     customRequests,
     missingFields,
     summary:

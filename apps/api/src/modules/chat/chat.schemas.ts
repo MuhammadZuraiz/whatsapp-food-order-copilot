@@ -1,6 +1,7 @@
 export {
   manualChatAnalysisRequestSchema,
   type ManualChatAnalysis,
+  type ManualChatAnalysisSource,
   type ManualChatAnalysisRequest,
   type ManualChatAnalysisResponse,
   type ManualChatOrderAnalysis,

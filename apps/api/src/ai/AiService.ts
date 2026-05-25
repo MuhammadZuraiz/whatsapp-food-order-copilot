@@ -147,10 +147,20 @@ export function createAiProviderFromEnv(): AiProvider {
 }
 
 export class AiService {
+  private readonly fallbackWarnings: string[] = [];
+
   constructor(private readonly provider: AiProvider = createAiProviderFromEnv()) {}
 
   get providerName() {
     return this.provider.name;
+  }
+
+  get warnings() {
+    return [...this.fallbackWarnings];
+  }
+
+  get usedFallback() {
+    return this.fallbackWarnings.length > 0;
   }
 
   async classifyIntent(text: string) {
@@ -180,7 +190,8 @@ export class AiService {
           "Required order fields are items, quantity, deliveryDate, deliveryTime, address, paymentMethod, and paymentStatus.",
           "PaymentStatus must be one of: not_discussed, method_selected, payment_details_sent, awaiting_payment, proof_received, paid_confirmed, payment_issue.",
           "Only use paid_confirmed if the business explicitly confirms payment.",
-          "Return JSON with: items, quantity, deliveryDate, deliveryTime, address, paymentMethod, paymentStatus, customRequests, missingFields, summary."
+          "If the customer asks what payment methods are accepted, set paymentInquiryDetected true but keep paymentMethod null until they choose one.",
+          "Return JSON with: items, quantity, deliveryDate, deliveryTime, address, paymentMethod, paymentStatus, paymentInquiryDetected, customRequests, missingFields, summary."
         ].join("\n"),
         text
       ),
@@ -215,6 +226,8 @@ export class AiService {
           "Generate 2-3 short reply suggestions for the business owner to review.",
           "The replies must be human-approved and must not be auto-sent.",
           "Prefer clarifying questions for missing order fields.",
+          "Do not sound like the order is confirmed while required fields are missing.",
+          "Do not say payment is confirmed unless the business explicitly confirmed payment.",
           "Return JSON with: suggestedReplies and safety.",
           "Each suggested reply needs text, type, and reason.",
           "Safety must be { requiresHumanApproval: true, autoSendAllowed: false }."
@@ -258,8 +271,10 @@ export class AiService {
       const result = schema.safeParse(parsed);
 
       if (!result.success) {
+        const message = `${taskName} returned invalid JSON shape.`;
+        this.fallbackWarnings.push(message);
         console.warn(
-          `[AI] ${taskName} returned invalid JSON shape: ${result.error.issues
+          `[AI] ${message} ${result.error.issues
             .map((issue) => issue.path.join(".") || issue.message)
             .join(", ")}`
         );
@@ -268,7 +283,9 @@ export class AiService {
 
       return result.data;
     } catch (error) {
-      console.warn(`[AI] ${taskName} failed: ${safeErrorMessage(error)}`);
+      const message = `${taskName} failed; used safe fallback.`;
+      this.fallbackWarnings.push(message);
+      console.warn(`[AI] ${message} ${safeErrorMessage(error)}`);
       return fallback;
     }
   }

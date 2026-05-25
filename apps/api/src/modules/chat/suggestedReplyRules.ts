@@ -86,7 +86,7 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (analysis.orderLikely && replies.length < 2) {
+  if (analysis.orderLikely && missingFields.size === 0 && replies.length < 2) {
     addReply(replies, {
       text: "I have noted this as a scheduled delivery request. I'll confirm availability before finalizing it.",
       type: "confirmation",
@@ -94,11 +94,19 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (analysis.orderLikely && replies.length < 3) {
+  if (analysis.orderLikely && missingFields.size === 0 && replies.length < 3) {
     addReply(replies, {
       text: "Thanks, I have the order details. I'll confirm availability for your scheduled delivery.",
       type: "confirmation",
       reason: "The order details look mostly complete."
+    });
+  }
+
+  if (analysis.orderLikely && missingFields.size > 0 && replies.length < 2) {
+    addReply(replies, {
+      text: "Please share the missing details so I can review availability for your scheduled delivery.",
+      type: "clarifying_question",
+      reason: "The order is not ready to confirm while required fields are missing."
     });
   }
 

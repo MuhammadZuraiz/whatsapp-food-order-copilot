@@ -2,15 +2,15 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 3 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, and a backend AI provider abstraction with a mock provider.
+This repository currently includes the Milestone 4 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, and an optional AI-assisted analyzer path with a rule-based fallback.
 
 ## What Is Included
 
 - `apps/api`: Node.js, Express, TypeScript API with `GET /health`
 - `apps/api/prisma`: Prisma schema for the local SQLite database
 - `apps/api/src/ai`: AI provider abstraction, mock provider, OpenAI-compatible provider, and task service
-- `apps/api/src/modules/chat`: manual paste parser, rule extractor, and suggested reply templates
-- `apps/dashboard`: React, Vite, Tailwind manual chat analyzer page
+- `apps/api/src/modules/chat`: manual paste parser, rule extractor, optional AI merge layer, and suggested reply templates
+- `apps/dashboard`: React, Vite, Tailwind manual chat analyzer page with an AI assistance toggle
 - `apps/extension`: Chrome Manifest V3 extension shell
 - `packages/shared`: shared TypeScript types and Zod schemas
 - root workspace config for pnpm and TypeScript
@@ -18,8 +18,6 @@ This repository currently includes the Milestone 3 foundation: the monorepo, app
 ## Not Implemented Yet
 
 - WhatsApp scraping or DOM reading
-- AI-powered Manual Chat Analyzer
-- AI reply generation
 - analytics dashboard
 - automatic WhatsApp message insertion
 - automatic message sending
@@ -74,12 +72,16 @@ The AI layer defaults to the zero-cost mock provider:
 
 ```env
 AI_PROVIDER=mock
+AI_ANALYZER_ENABLED=true
 ```
+
+`AI_ANALYZER_ENABLED=true` allows requests with `useAi: true` to use the AI-assisted analyzer. If the variable is missing, the API treats it as enabled because the mock provider is safe and free. If this is set to `false`, the analyzer returns the rule-based result.
 
 To try a free-tier OpenAI-compatible provider later, set these in `apps/api/.env`:
 
 ```env
 AI_PROVIDER=openai-compatible
+AI_ANALYZER_ENABLED=true
 AI_API_KEY=your-api-key
 AI_BASE_URL=https://provider.example.com/v1
 AI_MODEL=provider-model-name
@@ -119,7 +121,7 @@ The dashboard runs on `http://localhost:5173` by default.
 
 Open the dashboard and use the Manual Chat Analyzer to paste an exported WhatsApp chat. The dashboard calls the API at `POST /api/chat/analyze-manual` and saves parsed messages plus any likely draft order data locally.
 
-Milestone 3 does not make this analyzer AI-powered yet. It still uses the deterministic rule-based parser and extractor from Milestone 2.
+Use the `Use AI assistance` toggle to send `useAi: true`. The analyzer still starts with the deterministic Milestone 2 parser and extractor, then optionally asks the AI service for intent, order extraction, customer summary, and suggested replies. If AI fails, the API returns `analysis.source = "ai_fallback"` and uses the rule-based result.
 
 Run both API and dashboard:
 
@@ -220,6 +222,15 @@ Expected behavior:
 - missing fields include `paymentStatus` until payment proof or explicit business confirmation appears
 - 2-3 template suggested replies are shown and stored
 
+With AI assistance enabled, expected behavior also includes:
+
+- `analysis.source` is `ai_assisted` when the AI provider succeeds
+- `analysis.source` is `ai_fallback` if AI fails and rule-based analysis is returned
+- `analysis.customerSummary` may contain a short current-chat summary
+- payment questions such as `What payment methods do you accept?` do not select a payment method by themselves
+
+No database migration is needed for Milestone 4. Optional manual customer identity hints are accepted as `customerKey` or `customerPhone`; without those, the analyzer continues to fall back to `chatName`.
+
 ## Project Shape
 
 ```txt
@@ -232,3 +243,5 @@ packages/
 ```
 
 The WhatsApp Web integration layer is intentionally isolated in `apps/extension` so it can later be replaced or supplemented by the official WhatsApp Business API without reshaping the whole project.
+
+Future WhatsApp Web DOM selectors should live behind a `WhatsAppDomAdapter`, include a version stamp, and fail loudly with a clear "WhatsApp layout changed" message instead of silently breaking.

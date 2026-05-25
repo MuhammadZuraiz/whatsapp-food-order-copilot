@@ -51,12 +51,13 @@ export const intentClassificationResultSchema = z.object({
 
 export const aiOrderExtractionResultSchema = z.object({
   items: z.array(z.string()),
-  quantity: z.number().int().positive().nullable(),
+  quantity: z.union([z.number().int().positive(), z.string()]).nullable(),
   deliveryDate: z.string().nullable(),
   deliveryTime: z.string().nullable(),
   address: z.string().nullable(),
   paymentMethod: z.string().nullable(),
   paymentStatus: aiPaymentStatusSchema,
+  paymentInquiryDetected: z.boolean().optional(),
   customRequests: z.array(z.string()),
   missingFields: z.array(z.string()),
   summary: z.string()

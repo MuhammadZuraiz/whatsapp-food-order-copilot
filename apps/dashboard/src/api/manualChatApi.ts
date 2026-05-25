@@ -25,6 +25,8 @@ export type ManualChatAnalysisResponse = {
   };
   messages: ParsedChatMessage[];
   analysis: {
+    source: "rule_based" | "ai_assisted" | "ai_fallback";
+    customerSummary: string | null;
     intent:
       | "menu_request"
       | "price_question"
@@ -52,6 +54,7 @@ export type ManualChatAnalysisResponse = {
         | "proof_received"
         | "paid_confirmed"
         | "payment_issue";
+      paymentInquiryDetected?: boolean;
       customRequests: string[];
       missingFields: string[];
       summary: string;
@@ -63,8 +66,11 @@ export type ManualChatAnalysisResponse = {
 
 export type ManualChatAnalysisRequest = {
   chatName: string;
+  customerKey?: string;
+  customerPhone?: string;
   businessSenderNames: string[];
   rawText: string;
+  useAi?: boolean;
 };
 
 type ApiErrorResponse = {

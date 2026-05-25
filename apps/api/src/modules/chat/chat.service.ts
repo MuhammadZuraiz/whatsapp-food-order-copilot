@@ -1,8 +1,12 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
+import { toJsonField } from "../../utils/jsonFields.js";
 import type {
+  ManualChatAnalysis,
   ManualChatAnalysisRequest,
   ManualChatAnalysisResponse
 } from "./chat.schemas.js";
+import { buildAiAssistedAnalysis } from "./aiAnalysis.js";
 import { extractOrderRules } from "./orderRuleExtractor.js";
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
 import { parseWhatsAppExport } from "./whatsappParser.js";
@@ -27,6 +31,104 @@ function getLastMessageAt(messages: ManualChatAnalysisResponse["messages"]) {
   return timestamps[0] ?? null;
 }
 
+function isAiAnalyzerEnabled() {
+  return process.env.AI_ANALYZER_ENABLED?.toLocaleLowerCase() !== "false";
+}
+
+function buildRuleBasedAnalysis(
+  analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">
+): ManualChatAnalysis {
+  return {
+    ...analysisWithoutReplies,
+    source: "rule_based",
+    customerSummary: null,
+    suggestedReplies: buildSuggestedReplies(analysisWithoutReplies)
+  };
+}
+
+function buildAiFallbackAnalysis(
+  analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
+  warning: string
+): ManualChatAnalysis {
+  const fallbackAnalysis = {
+    ...analysisWithoutReplies,
+    source: "ai_fallback" as const,
+    customerSummary: null,
+    warnings: [...analysisWithoutReplies.warnings, warning]
+  };
+
+  return {
+    ...fallbackAnalysis,
+    suggestedReplies: buildSuggestedReplies(fallbackAnalysis)
+  };
+}
+
+async function buildAnalysis(
+  input: ManualChatAnalysisRequest,
+  analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
+  messages: ManualChatAnalysisResponse["messages"]
+) {
+  if (input.useAi !== true) {
+    return buildRuleBasedAnalysis(analysisWithoutReplies);
+  }
+
+  if (!isAiAnalyzerEnabled()) {
+    return buildRuleBasedAnalysis({
+      ...analysisWithoutReplies,
+      warnings: [
+        ...analysisWithoutReplies.warnings,
+        "AI analyzer is disabled by AI_ANALYZER_ENABLED=false; used rule-based analysis."
+      ]
+    });
+  }
+
+  try {
+    return await buildAiAssistedAnalysis(messages, analysisWithoutReplies);
+  } catch (error) {
+    console.warn(
+      `[AI] Manual chat analyzer failed; using rule-based fallback. ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`
+    );
+    return buildAiFallbackAnalysis(
+      analysisWithoutReplies,
+      "AI-assisted analysis failed; used rule-based fallback."
+    );
+  }
+}
+
+async function findOrCreateCustomer(
+  transaction: Prisma.TransactionClient,
+  input: ManualChatAnalysisRequest
+) {
+  const customerPhone = input.customerPhone?.trim();
+  const customerKey = input.customerKey?.trim();
+  const where = customerPhone
+    ? { phoneRaw: customerPhone }
+    : customerKey
+      ? { phoneHash: customerKey }
+      : { displayName: input.chatName };
+
+  const existingCustomer = await transaction.customer.findFirst({
+    where,
+    orderBy: {
+      updatedAt: "desc"
+    }
+  });
+
+  if (existingCustomer) {
+    return existingCustomer;
+  }
+
+  return transaction.customer.create({
+    data: {
+      displayName: input.chatName,
+      phoneRaw: customerPhone,
+      phoneHash: customerKey
+    }
+  });
+}
+
 export async function analyzeManualChat(
   input: ManualChatAnalysisRequest
 ): Promise<ManualChatAnalysisResponse> {
@@ -35,29 +137,14 @@ export async function analyzeManualChat(
     parsed.messages,
     parsed.warnings
   );
-  const suggestedReplies = buildSuggestedReplies(analysisWithoutReplies);
-  const analysis = {
-    ...analysisWithoutReplies,
-    suggestedReplies
-  };
+  const analysis = await buildAnalysis(
+    input,
+    analysisWithoutReplies,
+    parsed.messages
+  );
 
   const stored = await prisma.$transaction(async (transaction) => {
-    const existingCustomer = await transaction.customer.findFirst({
-      where: {
-        displayName: input.chatName
-      },
-      orderBy: {
-        updatedAt: "desc"
-      }
-    });
-
-    const customer =
-      existingCustomer ??
-      (await transaction.customer.create({
-        data: {
-          displayName: input.chatName
-        }
-      }));
+    const customer = await findOrCreateCustomer(transaction, input);
 
     const conversation = await transaction.conversation.create({
       data: {
@@ -88,7 +175,7 @@ export async function analyzeManualChat(
             customerId: customer.id,
             conversationId: conversation.id,
             status: "draft",
-            itemsJson: JSON.stringify({
+            itemsJson: toJsonField({
               items: analysis.order.items,
               quantity: analysis.order.quantity
             }),
@@ -97,16 +184,16 @@ export async function analyzeManualChat(
             address: analysis.order.address,
             paymentMethod: analysis.order.paymentMethod,
             paymentStatus: analysis.order.paymentStatus,
-            customRequestsJson: JSON.stringify(analysis.order.customRequests),
-            missingFieldsJson: JSON.stringify(analysis.order.missingFields),
+            customRequestsJson: toJsonField(analysis.order.customRequests),
+            missingFieldsJson: toJsonField(analysis.order.missingFields),
             summary: analysis.order.summary
           }
         })
       : null;
 
-    if (suggestedReplies.length > 0) {
+    if (analysis.suggestedReplies.length > 0) {
       await transaction.suggestedReply.createMany({
-        data: suggestedReplies.map((reply) => ({
+        data: analysis.suggestedReplies.map((reply) => ({
           conversationId: conversation.id,
           orderId: order?.id ?? null,
           replyText: reply.text,

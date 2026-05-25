@@ -256,8 +256,24 @@ function extractCustomRequests(customerText: string) {
   return unique([...customerText.matchAll(requestRegex)].map((match) => match[1]));
 }
 
-function extractPaymentMethod(text: string) {
-  const normalized = normalize(text);
+function detectPaymentInquiry(customerText: string) {
+  return /\b(what|which|how|do you|can i|can we).{0,60}\b(payment|pay|cash|card|transfer|methods?|options?|accept)\b/i.test(
+    customerText
+  ) || /\b(payment methods?|payment options?|how should i pay)\b/i.test(customerText);
+}
+
+function customerSelectedPaymentMethod(customerText: string) {
+  return /\b(i can pay|i will pay|i'll pay|i would like to pay|pay by|pay via|cash is fine|cash works|transfer is fine|bank transfer is fine|card is fine|i prefer)\b/i.test(
+    customerText
+  );
+}
+
+function extractPaymentMethod(customerText: string) {
+  const normalized = normalize(customerText);
+
+  if (detectPaymentInquiry(customerText) && !customerSelectedPaymentMethod(customerText)) {
+    return null;
+  }
 
   if (/\bbank transfer\b|\btransfer\b/.test(normalized)) {
     return "bank_transfer";
@@ -277,7 +293,9 @@ function extractPaymentMethod(text: string) {
 function extractPaymentStatus(
   customerText: string,
   businessText: string,
-  allText: string
+  allText: string,
+  paymentMethod: string | null,
+  paymentInquiryDetected: boolean
 ): PaymentStatus {
   if (/\b(payment failed|payment issue|declined|not received)\b/i.test(allText)) {
     return "payment_issue";
@@ -292,7 +310,7 @@ function extractPaymentStatus(
   }
 
   if (
-    /\b(paid|sent|transferred|screenshot attached|screenshot|receipt|proof)\b/i.test(
+    /\b(paid|sent payment|payment sent|sent the payment|transferred|screenshot attached|screenshot|receipt|proof)\b/i.test(
       customerText
     )
   ) {
@@ -311,8 +329,12 @@ function extractPaymentStatus(
     return "awaiting_payment";
   }
 
-  if (/\b(payment|pay|cash|card|bank transfer|transfer)\b/i.test(allText)) {
+  if (paymentMethod) {
     return "method_selected";
+  }
+
+  if (paymentInquiryDetected) {
+    return "not_discussed";
   }
 
   return "not_discussed";
@@ -368,7 +390,7 @@ function determineIntent(
   return "general_question";
 }
 
-function buildMissingFields(order: ManualChatOrderAnalysis) {
+export function buildMissingFields(order: ManualChatOrderAnalysis) {
   const missingFields: string[] = [];
 
   if (order.items.length === 0) {
@@ -402,7 +424,9 @@ function buildMissingFields(order: ManualChatOrderAnalysis) {
   return missingFields;
 }
 
-function buildSummary(order: Omit<ManualChatOrderAnalysis, "missingFields" | "summary">) {
+export function buildSummary(
+  order: Omit<ManualChatOrderAnalysis, "missingFields" | "summary">
+) {
   const parts = [
     order.items.length > 0 ? `Items: ${order.items.join(", ")}` : "Items not clear",
     order.quantity ? `quantity ${order.quantity}` : "quantity missing",
@@ -433,8 +457,15 @@ export function extractOrderRules(
   const customRequests = extractCustomRequests(customerText);
   const deliveryDate = extractDeliveryDate(customerText);
   const deliveryTime = extractDeliveryTime(customerText);
-  const paymentMethod = extractPaymentMethod(allText);
-  const paymentStatus = extractPaymentStatus(customerText, businessText, allText);
+  const paymentInquiryDetected = detectPaymentInquiry(customerText);
+  const paymentMethod = extractPaymentMethod(customerText);
+  const paymentStatus = extractPaymentStatus(
+    customerText,
+    businessText,
+    allText,
+    paymentMethod,
+    paymentInquiryDetected
+  );
   const hasQuantityOrItems =
     itemsAndQuantity.items.length > 0 || itemsAndQuantity.quantity !== null;
   const intent = determineIntent(
@@ -455,6 +486,7 @@ export function extractOrderRules(
     address: extractAddress(messages),
     paymentMethod,
     paymentStatus,
+    paymentInquiryDetected,
     customRequests
   };
   const missingFields = orderLikely
@@ -473,6 +505,8 @@ export function extractOrderRules(
   };
 
   return {
+    source: "rule_based",
+    customerSummary: null,
     intent,
     orderLikely,
     order,

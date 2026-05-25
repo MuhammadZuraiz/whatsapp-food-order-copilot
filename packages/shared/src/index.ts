@@ -53,6 +53,12 @@ export const suggestedReplyTypeSchema = z.enum([
   "general"
 ]);
 
+export const manualChatAnalysisSourceSchema = z.enum([
+  "rule_based",
+  "ai_assisted",
+  "ai_fallback"
+]);
+
 export const suggestedReplyDtoSchema = z.object({
   text: z.string(),
   type: suggestedReplyTypeSchema,
@@ -61,24 +67,30 @@ export const suggestedReplyDtoSchema = z.object({
 
 export const manualChatAnalysisRequestSchema = z.object({
   chatName: z.string().trim().min(1),
+  customerKey: z.string().trim().min(1).optional(),
+  customerPhone: z.string().trim().min(1).optional(),
   businessSenderNames: z.array(z.string().trim().min(1)).min(1),
-  rawText: z.string().trim().min(1)
+  rawText: z.string().trim().min(1),
+  useAi: z.boolean().optional()
 });
 
 export const manualChatOrderAnalysisSchema = z.object({
   items: z.array(z.string()),
-  quantity: z.number().int().positive().nullable(),
+  quantity: z.union([z.number().int().positive(), z.string()]).nullable(),
   deliveryDate: z.string().nullable(),
   deliveryTime: z.string().nullable(),
   address: z.string().nullable(),
   paymentMethod: z.string().nullable(),
   paymentStatus: paymentStatusSchema,
+  paymentInquiryDetected: z.boolean().optional(),
   customRequests: z.array(z.string()),
   missingFields: z.array(z.string()),
   summary: z.string()
 });
 
 export const manualChatAnalysisSchema = z.object({
+  source: manualChatAnalysisSourceSchema,
+  customerSummary: z.string().nullable(),
   intent: analysisIntentSchema,
   orderLikely: z.boolean(),
   order: manualChatOrderAnalysisSchema,
@@ -105,6 +117,10 @@ export type AnalysisIntent = z.infer<typeof analysisIntentSchema>;
 export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 
 export type SuggestedReplyType = z.infer<typeof suggestedReplyTypeSchema>;
+
+export type ManualChatAnalysisSource = z.infer<
+  typeof manualChatAnalysisSourceSchema
+>;
 
 export type SuggestedReplyDto = z.infer<typeof suggestedReplyDtoSchema>;
 
