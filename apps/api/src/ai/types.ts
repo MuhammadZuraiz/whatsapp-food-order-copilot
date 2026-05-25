@@ -63,13 +63,30 @@ export const aiOrderExtractionResultSchema = z.object({
   summary: z.string()
 });
 
-export const customerMemoryUpdateResultSchema = z.object({
-  shouldUpdate: z.boolean(),
-  profileSummary: z.string().nullable(),
-  usualAddress: z.string().nullable(),
-  preferences: z.array(z.string()),
-  notes: z.array(z.string())
-});
+const nullableStringFromUnknownSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value : null),
+  z.string().nullable()
+);
+
+const stringArrayFromUnknownSchema = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [],
+  z.array(z.string())
+);
+
+export const customerMemoryUpdateResultSchema = z
+  .object({
+    profileSummary: nullableStringFromUnknownSchema,
+    preferences: stringArrayFromUnknownSchema,
+    usualAddress: nullableStringFromUnknownSchema,
+    paymentBehavior: nullableStringFromUnknownSchema,
+    complaintHistory: stringArrayFromUnknownSchema,
+    repeatOrderPatterns: stringArrayFromUnknownSchema,
+    notes: stringArrayFromUnknownSchema
+  })
+  .passthrough();
 
 export const aiSuggestedRepliesResultSchema = z.object({
   suggestedReplies: z.array(
@@ -94,8 +111,10 @@ export const brandStyleAnalysisResultSchema = z.object({
 });
 
 export const aiTestTaskSchema = z.enum([
+  "generate",
   "classifyIntent",
   "extractOrder",
+  "updateCustomerMemory",
   "generateSuggestedReplies",
   "analyzeBrandStyle"
 ]);

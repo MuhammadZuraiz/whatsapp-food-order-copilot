@@ -311,12 +311,16 @@ export class MockProvider implements AiProvider {
 
     if (task === "updateCustomerMemory") {
       return JSON.stringify({
-        shouldUpdate: true,
         profileSummary: "Customer is interested in scheduled food delivery.",
-        usualAddress: null,
         preferences: userText.toLocaleLowerCase().includes("less spicy")
           ? ["less spicy"]
           : [],
+        usualAddress: null,
+        paymentBehavior: /\b(payment|pay|cash|card|transfer)\b/i.test(userText)
+          ? "Asked about or discussed payment."
+          : null,
+        complaintHistory: [],
+        repeatOrderPatterns: [],
         notes: ["Mock memory update generated from pasted text."]
       });
     }
@@ -351,8 +355,6 @@ export class MockProvider implements AiProvider {
       });
     }
 
-    return JSON.stringify({
-      message: "MockProvider received an unknown task."
-    });
+    return "Hello from the mock AI provider. Human approval is still required.";
   }
 }

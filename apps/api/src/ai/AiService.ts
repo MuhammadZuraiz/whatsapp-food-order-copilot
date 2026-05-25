@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { AiProvider } from "./AiProvider.js";
+import { getAiRuntimeConfig } from "./config.js";
+import { extractJsonFromText } from "./extractJsonFromText.js";
 import { MockProvider } from "./providers/MockProvider.js";
 import { OpenAICompatibleProvider } from "./providers/OpenAICompatibleProvider.js";
 import {
@@ -10,7 +12,6 @@ import {
   intentClassificationResultSchema,
   type AiMessage,
   type AiOrderExtractionResult,
-  type AiProviderName,
   type AiSuggestedRepliesResult,
   type BrandStyleAnalysisResult,
   type CustomerMemoryUpdateResult,
@@ -46,10 +47,12 @@ const orderFallback: AiOrderExtractionResult = {
 };
 
 const memoryFallback: CustomerMemoryUpdateResult = {
-  shouldUpdate: false,
   profileSummary: null,
-  usualAddress: null,
   preferences: [],
+  usualAddress: null,
+  paymentBehavior: null,
+  complaintHistory: [],
+  repeatOrderPatterns: [],
   notes: []
 };
 
@@ -79,21 +82,6 @@ function safeErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
-function parseJsonObject(output: string) {
-  try {
-    return JSON.parse(output) as unknown;
-  } catch {
-    const start = output.indexOf("{");
-    const end = output.lastIndexOf("}");
-
-    if (start >= 0 && end > start) {
-      return JSON.parse(output.slice(start, end + 1)) as unknown;
-    }
-
-    throw new Error("Provider output was not valid JSON.");
-  }
-}
-
 function createJsonTaskMessages(task: string, instructions: string, text: string) {
   return [
     {
@@ -114,32 +102,19 @@ function createJsonTaskMessages(task: string, instructions: string, text: string
 }
 
 export function createAiProviderFromEnv(): AiProvider {
-  const selectedProvider = (
-    process.env.AI_PROVIDER ?? "mock"
-  ).toLocaleLowerCase() as AiProviderName;
+  const selectedProvider = getAiRuntimeConfig().provider;
 
   if (selectedProvider === "openai-compatible") {
-    const apiKey = process.env.AI_API_KEY;
-    const baseUrl = process.env.AI_BASE_URL;
-    const model = process.env.AI_MODEL;
-
-    if (apiKey && baseUrl && model) {
-      return new OpenAICompatibleProvider({
-        apiKey,
-        baseUrl,
-        model
-      });
-    }
-
-    console.warn(
-      "[AI] AI_PROVIDER=openai-compatible is missing AI_API_KEY, AI_BASE_URL, or AI_MODEL. Falling back to MockProvider."
-    );
-    return new MockProvider();
+    return new OpenAICompatibleProvider({
+      apiKey: process.env.AI_API_KEY,
+      baseUrl: process.env.AI_BASE_URL,
+      model: process.env.AI_MODEL
+    });
   }
 
-  if (selectedProvider !== "mock") {
+  if ((process.env.AI_PROVIDER ?? "mock").toLocaleLowerCase() !== "mock") {
     console.warn(
-      `[AI] Unknown AI_PROVIDER "${selectedProvider}". Falling back to MockProvider.`
+      `[AI] Unknown AI_PROVIDER "${process.env.AI_PROVIDER}". Falling back to MockProvider.`
     );
   }
 
@@ -207,9 +182,12 @@ export class AiService {
       createJsonTaskMessages(
         "updateCustomerMemory",
         [
-          "Identify stable customer memory worth saving for future conversations.",
-          "Only include preferences, usual address, or notes that are supported by the text.",
-          "Return JSON with: shouldUpdate, profileSummary, usualAddress, preferences, notes."
+          "Summarize stable customer memory from this chat only.",
+          "Only include facts supported by the text. Use null for unknown strings and [] for unknown arrays.",
+          "Return strict JSON with exactly these keys: profileSummary, preferences, usualAddress, paymentBehavior, complaintHistory, repeatOrderPatterns, notes.",
+          "profileSummary must be a short string or null.",
+          "preferences, complaintHistory, repeatOrderPatterns, and notes must be arrays of strings.",
+          "usualAddress and paymentBehavior must be strings or null."
         ].join("\n"),
         text
       ),
@@ -256,6 +234,30 @@ export class AiService {
     );
   }
 
+  async generateText(text: string) {
+    return this.provider.generate(
+      [
+        {
+          role: "system",
+          content: [
+            "You are a safe development test endpoint for a WhatsApp food-order copilot.",
+            "Return one concise text response.",
+            "Never imply that messages should be auto-sent."
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: text
+        }
+      ],
+      {
+        temperature: 0.2,
+        maxTokens: 200,
+        responseFormat: "text"
+      }
+    );
+  }
+
   private async generateJson<T>(
     taskName: string,
     messages: AiMessage[],
@@ -268,7 +270,7 @@ export class AiService {
         maxTokens: 900,
         responseFormat: "json"
       });
-      const parsed = parseJsonObject(output);
+      const parsed = extractJsonFromText(output);
       const result = schema.safeParse(parsed);
 
       if (!result.success) {

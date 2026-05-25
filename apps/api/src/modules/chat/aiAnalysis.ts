@@ -15,6 +15,11 @@ import {
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
 
 type AnalysisWithoutReplies = Omit<ManualChatAnalysis, "suggestedReplies">;
+type AiTaskResult<T> = {
+  value: T;
+  usedFallback: boolean;
+  warnings: string[];
+};
 
 function unique(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
@@ -210,6 +215,19 @@ function sanitizeAiReplies(
   return replies;
 }
 
+async function runAiTask<T>(
+  task: (service: AiService) => Promise<T>
+): Promise<AiTaskResult<T>> {
+  const service = new AiService();
+  const value = await task(service);
+
+  return {
+    value,
+    usedFallback: service.usedFallback,
+    warnings: service.warnings
+  };
+}
+
 function fallbackToRules(
   ruleAnalysis: AnalysisWithoutReplies,
   warnings: string[]
@@ -231,31 +249,60 @@ export async function buildAiAssistedAnalysis(
   messages: ParsedChatMessage[],
   ruleAnalysis: AnalysisWithoutReplies
 ): Promise<ManualChatAnalysis> {
-  const service = new AiService();
   const text = conversationText(messages);
 
-  const [intentResult, aiOrder, memoryResult] = await Promise.all([
-    service.classifyIntent(text),
-    service.extractOrder(text),
-    service.updateCustomerMemory(text)
+  const [intentTask, orderTask, memoryTask] = await Promise.all([
+    runAiTask((service) => service.classifyIntent(text)),
+    runAiTask((service) => service.extractOrder(text)),
+    runAiTask((service) => service.updateCustomerMemory(text))
   ]);
+  const taskWarnings: string[] = [];
 
-  if (service.usedFallback) {
+  if (intentTask.usedFallback) {
+    taskWarnings.push(
+      "Intent classification AI task failed; rule-based intent used."
+    );
+  }
+
+  if (orderTask.usedFallback) {
+    taskWarnings.push(
+      "Order extraction AI task failed; rule-based extraction used."
+    );
+  }
+
+  if (memoryTask.usedFallback) {
+    taskWarnings.push(
+      "Customer memory AI task failed; customerSummary was omitted."
+    );
+  }
+
+  const criticalAiSucceeded =
+    !intentTask.usedFallback || !orderTask.usedFallback;
+
+  if (!criticalAiSucceeded) {
     return fallbackToRules(ruleAnalysis, [
-      "AI analysis failed; returned rule-based fallback.",
-      ...service.warnings
+      "Critical AI analysis tasks failed; returned rule-based fallback.",
+      ...taskWarnings
     ]);
   }
 
-  const mergedOrder = mergeOrder(ruleAnalysis.order, aiOrder, messages);
+  const mergedOrder = orderTask.usedFallback
+    ? ruleAnalysis.order
+    : mergeOrder(ruleAnalysis.order, orderTask.value, messages);
   const orderLikely =
     ruleAnalysis.orderLikely ||
-    (intentResult.orderLikely && orderHasConcreteSignal(mergedOrder));
+    (!intentTask.usedFallback &&
+      intentTask.value.orderLikely &&
+      orderHasConcreteSignal(mergedOrder));
   const analysisWithoutReplies: AnalysisWithoutReplies = {
     source: "ai_assisted",
-    customerSummary: memoryResult.profileSummary,
+    customerSummary: memoryTask.usedFallback
+      ? null
+      : memoryTask.value.profileSummary,
     intent: orderLikely
-      ? chooseIntent(ruleAnalysis, intentResult.intent, orderLikely)
+      ? intentTask.usedFallback
+        ? ruleAnalysis.intent
+        : chooseIntent(ruleAnalysis, intentTask.value.intent, orderLikely)
       : ruleAnalysis.intent,
     orderLikely,
     order: orderLikely
@@ -265,34 +312,44 @@ export async function buildAiAssistedAnalysis(
           missingFields: [],
           summary:
             ruleAnalysis.order.summary ||
-            `Intent appears to be ${intentResult.intent.replaceAll("_", " ")}; no order record is likely yet.`
+            `Intent appears to be ${
+              intentTask.usedFallback
+                ? ruleAnalysis.intent.replaceAll("_", " ")
+                : intentTask.value.intent.replaceAll("_", " ")
+            }; no order record is likely yet.`
         },
-    warnings: ruleAnalysis.warnings
+    warnings: [...ruleAnalysis.warnings, ...taskWarnings]
   };
 
-  const repliesResult = await service.generateSuggestedReplies(
-    [
-      "Use the backend-computed order fields below.",
-      `Intent: ${analysisWithoutReplies.intent}`,
-      `Order likely: ${analysisWithoutReplies.orderLikely}`,
-      `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
-      `Order summary: ${analysisWithoutReplies.order.summary}`,
-      "Chat text:",
-      text
-    ].join("\n")
+  const repliesTask = await runAiTask((service) =>
+    service.generateSuggestedReplies(
+      [
+        "Use the backend-computed order fields below.",
+        `Intent: ${analysisWithoutReplies.intent}`,
+        `Order likely: ${analysisWithoutReplies.orderLikely}`,
+        `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
+        `Order summary: ${analysisWithoutReplies.order.summary}`,
+        "Chat text:",
+        text
+      ].join("\n")
+    )
   );
 
-  if (service.usedFallback) {
-    return fallbackToRules(ruleAnalysis, [
-      "AI suggested reply generation failed; returned rule-based fallback.",
-      ...service.warnings
-    ]);
+  if (repliesTask.usedFallback) {
+    return {
+      ...analysisWithoutReplies,
+      warnings: [
+        ...analysisWithoutReplies.warnings,
+        "Suggested replies AI task failed; template replies used."
+      ],
+      suggestedReplies: buildSuggestedReplies(analysisWithoutReplies)
+    };
   }
 
   return {
     ...analysisWithoutReplies,
     suggestedReplies: sanitizeAiReplies(
-      repliesResult.suggestedReplies,
+      repliesTask.value.suggestedReplies,
       analysisWithoutReplies
     )
   };

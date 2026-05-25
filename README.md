@@ -2,7 +2,7 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 4 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, and an optional AI-assisted analyzer path with a rule-based fallback.
+This repository currently includes the Milestone 5A foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, and a hardened OpenAI-compatible provider configuration path.
 
 ## What Is Included
 
@@ -77,7 +77,7 @@ AI_ANALYZER_ENABLED=true
 
 `AI_ANALYZER_ENABLED=true` allows requests with `useAi: true` to use the AI-assisted analyzer. If the variable is missing, the API treats it as enabled because the mock provider is safe and free. If this is set to `false`, the analyzer returns the rule-based result.
 
-To try a free-tier OpenAI-compatible provider later, set these in `apps/api/.env`:
+To try a free-tier OpenAI-compatible provider, set these in `apps/api/.env`:
 
 ```env
 AI_PROVIDER=openai-compatible
@@ -87,7 +87,29 @@ AI_BASE_URL=https://provider.example.com/v1
 AI_MODEL=provider-model-name
 ```
 
-`AI_BASE_URL` should point at an OpenAI-compatible API base. The backend appends `/chat/completions` unless the URL already ends with that path.
+`AI_BASE_URL` should point at an OpenAI-compatible API base. The backend appends `/chat/completions` unless the URL already ends with that path. API keys are read only by `apps/api`; do not put API keys in dashboard/frontend environment variables.
+
+Recommended first real-provider setup, using Groq's OpenAI-compatible API:
+
+```env
+AI_PROVIDER=openai-compatible
+AI_ANALYZER_ENABLED=true
+AI_API_KEY=your_groq_api_key
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=<choose a currently available Groq chat model>
+```
+
+OpenRouter alternative:
+
+```env
+AI_PROVIDER=openai-compatible
+AI_ANALYZER_ENABLED=true
+AI_API_KEY=your_openrouter_api_key
+AI_BASE_URL=https://openrouter.ai/api/v1
+AI_MODEL=openrouter/free
+```
+
+Free tiers, model names, and rate limits can change. Check the provider dashboard/docs before choosing the model. Never commit real API keys.
 
 ## Run During Development
 
@@ -148,6 +170,7 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 ## API Routes
 
 - `GET /health`
+- `GET /api/ai/config`
 - `POST /api/ai/test`
 - `POST /api/chat/analyze-manual`
 - `GET /api/products`
@@ -164,9 +187,52 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 
 Request bodies are validated with Zod. Invalid request bodies return `400`; missing records return `404`.
 
-## AI Test Endpoint
+## AI Config And Test Endpoints
 
 The AI foundation can be tested without API keys because `AI_PROVIDER=mock` is the default.
+
+Check safe AI configuration:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://localhost:4000/api/ai/config
+```
+
+Expected mock output:
+
+```json
+{
+  "provider": "mock",
+  "activeProviderUsesExternalApi": false,
+  "analyzerEnabled": true,
+  "model": null,
+  "baseUrlConfigured": false,
+  "apiKeyConfigured": false
+}
+```
+
+The endpoint never returns the actual API key.
+
+Direct provider test:
+
+```powershell
+$body = @{
+  task = "generate"
+  text = "Say hello in one short sentence."
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://localhost:4000/api/ai/test -ContentType "application/json" -Body $body
+```
+
+Expected mock output includes:
+
+```json
+{
+  "provider": "mock",
+  "result": {
+    "text": "Hello from the mock AI provider. Human approval is still required."
+  }
+}
+```
 
 PowerShell example:
 
@@ -191,13 +257,18 @@ Expected output includes:
 }
 ```
 
-Other supported test tasks:
+Supported test tasks:
 
+- `generate`
+- `classifyIntent`
 - `extractOrder`
+- `updateCustomerMemory`
 - `generateSuggestedReplies`
 - `analyzeBrandStyle`
 
-The task service also includes `updateCustomerMemory()` for later wiring, but it is not exposed through the test endpoint in this milestone.
+If `AI_PROVIDER=openai-compatible` is selected and the provider is misconfigured or unavailable, `/api/ai/test` returns a `502` JSON response with a safe error message and no API key. The Manual Chat Analyzer catches provider failures and returns `analysis.source = "ai_fallback"` with the rule-based result.
+
+`updateCustomerMemory` is intentionally a lightweight current-chat summary task for now. It does not build full historical customer memory yet.
 
 ## Manual Chat Analyzer Sample
 
