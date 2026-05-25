@@ -2,6 +2,11 @@ import { AiService } from "../../ai/AiService.js";
 import type { AiOrderExtractionResult } from "../../ai/types.js";
 import type { BrandStyleProfileDto } from "@wfo/shared";
 import { formatBrandStyleContext } from "../brandStyle/brandStyle.service.js";
+import {
+  customerMemorySummary,
+  formatCustomerMemoryContext,
+  type CustomerMemoryContext
+} from "../customers/customerMemory.js";
 import type {
   ManualChatAnalysis,
   ManualChatOrderAnalysis,
@@ -372,6 +377,12 @@ function asksForPaymentStatus(reply: SuggestedReplyDto) {
   );
 }
 
+function asksForItems(reply: SuggestedReplyDto) {
+  return /\b(items?|what would you like|usual|same|chicken biryani tray)\b/i.test(
+    reply.text
+  );
+}
+
 function addUniqueReply(
   replies: SuggestedReplyDto[],
   reply: SuggestedReplyDto | undefined
@@ -399,6 +410,10 @@ function prioritizeMissingFieldReplies(
   const missing = new Set(order.missingFields);
   const prioritizedReplies: SuggestedReplyDto[] = [];
   const preferredReplies = [...templateReplies, ...safeAiReplies];
+
+  if (missing.has("items")) {
+    addUniqueReply(prioritizedReplies, preferredReplies.find(asksForItems));
+  }
 
   if (missing.has("address")) {
     addUniqueReply(prioritizedReplies, preferredReplies.find(asksForAddress));
@@ -446,9 +461,14 @@ function hasContradictoryAvailabilityReply(
 function sanitizeAiReplies(
   aiReplies: SuggestedReplyDto[],
   analysisWithoutReplies: AnalysisWithoutReplies,
-  products: MenuProductContext[]
+  products: MenuProductContext[],
+  customerMemory: CustomerMemoryContext | null
 ) {
-  const templateReplies = buildSuggestedReplies(analysisWithoutReplies, products);
+  const templateReplies = buildSuggestedReplies(
+    analysisWithoutReplies,
+    products,
+    customerMemory
+  );
   const safeAiReplies: SuggestedReplyDto[] = [];
 
   for (const reply of aiReplies) {
@@ -510,18 +530,25 @@ async function runAiTask<T>(
 function fallbackToRules(
   ruleAnalysis: AnalysisWithoutReplies,
   warnings: string[],
-  products: MenuProductContext[]
+  products: MenuProductContext[],
+  customerMemory: CustomerMemoryContext | null
 ): ManualChatAnalysis {
   const fallbackAnalysis = {
     ...ruleAnalysis,
     source: "ai_fallback" as const,
     customerSummary: null,
+    customerMemoryUsed: Boolean(customerMemory),
+    customerMemorySummary: customerMemorySummary(customerMemory),
     warnings: [...ruleAnalysis.warnings, ...warnings]
   };
 
   return {
     ...fallbackAnalysis,
-    suggestedReplies: buildSuggestedReplies(fallbackAnalysis, products)
+    suggestedReplies: buildSuggestedReplies(
+      fallbackAnalysis,
+      products,
+      customerMemory
+    )
   };
 }
 
@@ -529,11 +556,13 @@ export async function buildAiAssistedAnalysis(
   messages: ParsedChatMessage[],
   ruleAnalysis: AnalysisWithoutReplies,
   products: MenuProductContext[] = [],
-  brandStyle: BrandStyleProfileDto | null = null
+  brandStyle: BrandStyleProfileDto | null = null,
+  customerMemory: CustomerMemoryContext | null = null
 ): Promise<ManualChatAnalysis> {
   const text = conversationText(messages);
   const menuContext = formatMenuContext(products);
   const brandStyleContext = formatBrandStyleContext(brandStyle);
+  const customerMemoryContext = formatCustomerMemoryContext(customerMemory);
   const textWithMenuContext = [menuContext, "Chat text:", text].join("\n\n");
 
   const [intentTask, orderTask, memoryTask] = await Promise.all([
@@ -568,7 +597,7 @@ export async function buildAiAssistedAnalysis(
     return fallbackToRules(ruleAnalysis, [
       "Critical AI analysis tasks failed; returned rule-based fallback.",
       ...taskWarnings
-    ], products);
+    ], products, customerMemory);
   }
 
   const mergedOrder = orderTask.usedFallback
@@ -584,6 +613,8 @@ export async function buildAiAssistedAnalysis(
     customerSummary: memoryTask.usedFallback
       ? null
       : memoryTask.value.profileSummary,
+    customerMemoryUsed: Boolean(customerMemory),
+    customerMemorySummary: customerMemorySummary(customerMemory),
     intent: orderLikely
       ? intentTask.usedFallback
         ? ruleAnalysis.intent
@@ -616,7 +647,9 @@ export async function buildAiAssistedAnalysis(
         `Order summary: ${analysisWithoutReplies.order.summary}`,
         menuContext,
         brandStyleContext,
+        customerMemoryContext,
         "Use brand style for wording only. Do not let style override missing-field safety, product facts, or payment rules.",
+        "Use customer memory only as advisory wording. Do not mark address, items, or timing complete unless the current chat confirms them.",
         "Chat text:",
         text
       ].join("\n")
@@ -630,14 +663,19 @@ export async function buildAiAssistedAnalysis(
         ...analysisWithoutReplies.warnings,
         "Suggested replies AI task failed; template replies used."
       ],
-      suggestedReplies: buildSuggestedReplies(analysisWithoutReplies, products)
+      suggestedReplies: buildSuggestedReplies(
+        analysisWithoutReplies,
+        products,
+        customerMemory
+      )
     };
   }
 
   const safeReplies = sanitizeAiReplies(
     repliesTask.value.suggestions,
     analysisWithoutReplies,
-    products
+    products,
+    customerMemory
   );
 
   if (safeReplies.usedTemplateFallback) {

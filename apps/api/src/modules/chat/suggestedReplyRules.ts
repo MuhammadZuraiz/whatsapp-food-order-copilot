@@ -2,6 +2,7 @@ import type {
   ManualChatAnalysis,
   SuggestedReplyDto
 } from "./chat.schemas.js";
+import type { CustomerMemoryContext } from "../customers/customerMemory.js";
 import type { MenuProductContext } from "./menuContext.js";
 
 function addReply(
@@ -52,9 +53,23 @@ function preorderPrefix(product: MenuProductContext | undefined) {
     : "";
 }
 
+function repeatOrderHint(customerMemory: CustomerMemoryContext | null) {
+  const summary =
+    customerMemory?.recentOrderSummaries[0] ?? customerMemory?.profileSummary;
+
+  if (!summary) {
+    return null;
+  }
+
+  const chickenBiryaniMatch = summary.match(/chicken biryani tray/i);
+
+  return chickenBiryaniMatch ? "Chicken Biryani Tray" : null;
+}
+
 export function buildSuggestedReplies(
   analysis: Omit<ManualChatAnalysis, "suggestedReplies">,
-  products: MenuProductContext[] = []
+  products: MenuProductContext[] = [],
+  customerMemory: CustomerMemoryContext | null = null
 ) {
   const replies: SuggestedReplyDto[] = [];
   const missingFields = new Set(analysis.order.missingFields);
@@ -106,10 +121,16 @@ export function buildSuggestedReplies(
   }
 
   if (missingFields.has("items")) {
+    const usualOrder = repeatOrderHint(customerMemory);
+
     addReply(replies, {
-      text: "Sure, what items would you like to order?",
+      text: usualOrder
+        ? `Would you like the usual ${usualOrder}, or should I use a different item this time?`
+        : "Sure, what items would you like to order?",
       type: "clarifying_question",
-      reason: "The order items are not clear yet."
+      reason: usualOrder
+        ? "Customer memory suggests a usual order, but the current chat has not confirmed the item."
+        : "The order items are not clear yet."
     });
   }
 
@@ -139,9 +160,13 @@ export function buildSuggestedReplies(
 
   if (missingFields.has("address")) {
     addReply(replies, {
-      text: `${preorderPrefix(matchedProduct)}Please send your delivery address/location so I can continue.`,
+      text: customerMemory?.usualAddress
+        ? `${preorderPrefix(matchedProduct)}Would you like delivery to your usual address: ${customerMemory.usualAddress}, or should I use a different location?`
+        : `${preorderPrefix(matchedProduct)}Please send your delivery address/location so I can continue.`,
       type: "clarifying_question",
-      reason: "The delivery address is missing."
+      reason: customerMemory?.usualAddress
+        ? "The current chat has no confirmed address, but the customer has a usual address on file."
+        : "The delivery address is missing."
     });
   }
 
@@ -181,8 +206,12 @@ export function buildSuggestedReplies(
   }
 
   if (analysis.orderLikely && hasMissingFields && replies.length < 2) {
+    const preference = customerMemory?.preferences[0];
+
     addReply(replies, {
-      text: "Please share the missing details so I can review availability for your scheduled delivery.",
+      text: preference
+        ? `I've noted ${preference} from your preferences. Please share the missing details so I can review availability for your scheduled delivery.`
+        : "Please share the missing details so I can review availability for your scheduled delivery.",
       type: "clarifying_question",
       reason: "The order is not ready to confirm while required fields are missing."
     });

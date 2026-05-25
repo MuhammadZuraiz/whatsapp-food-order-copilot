@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { BrandStylePage } from "./pages/BrandStylePage";
+import { CustomersPage } from "./pages/CustomersPage";
 import { ImportChatsPage } from "./pages/ImportChatsPage";
 import { ManualChatAnalyzer } from "./pages/ManualChatAnalyzer";
 import { ProductsPage } from "./pages/ProductsPage";
 
-type Page = "analyzer" | "products" | "import" | "brandStyle";
+type Page = "analyzer" | "products" | "import" | "brandStyle" | "customers";
 
 const pages: Array<{
   id: Page;
@@ -25,6 +26,10 @@ const pages: Array<{
   {
     id: "brandStyle",
     label: "Brand Style"
+  },
+  {
+    id: "customers",
+    label: "Customers"
   }
 ];
 
@@ -34,7 +39,8 @@ export function App() {
     analyzer: <ManualChatAnalyzer />,
     products: <ProductsPage />,
     import: <ImportChatsPage />,
-    brandStyle: <BrandStylePage />
+    brandStyle: <BrandStylePage />,
+    customers: <CustomersPage />
   }[page];
 
   return (

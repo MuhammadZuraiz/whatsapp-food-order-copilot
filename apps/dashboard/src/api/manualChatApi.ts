@@ -29,6 +29,8 @@ export type ManualChatAnalysisResponse = {
   analysis: {
     source: "rule_based" | "ai_assisted" | "ai_fallback";
     customerSummary: string | null;
+    customerMemoryUsed?: boolean;
+    customerMemorySummary?: string | null;
     intent:
       | "menu_request"
       | "price_question"

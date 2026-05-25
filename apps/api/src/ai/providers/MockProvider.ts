@@ -317,6 +317,26 @@ function suggestedRepliesForPrompt(text: string) {
   return replies.slice(0, 3);
 }
 
+function extractUsualAddress(text: string) {
+  const match = text.match(
+    /\b(?:deliver to|address is|delivery address is|use)\s+([^\n.]+(?:street|villa|building|apartment|flat|area|gulberg)[^\n.]*)/i
+  );
+
+  return match?.[1]?.trim() ?? null;
+}
+
+function memoryProfileSummary(text: string) {
+  const normalized = text.toLocaleLowerCase();
+
+  if (/\bchicken biryani tray\b/.test(normalized)) {
+    return /\bsame|again|last time|usual\b/.test(normalized)
+      ? "Repeat customer who orders Chicken Biryani Tray for scheduled delivery."
+      : "Customer is interested in Chicken Biryani Tray for scheduled delivery.";
+  }
+
+  return "Customer is interested in scheduled food delivery.";
+}
+
 export class MockProvider implements AiProvider {
   readonly name = "mock" as const;
 
@@ -334,16 +354,18 @@ export class MockProvider implements AiProvider {
 
     if (task === "updateCustomerMemory") {
       return JSON.stringify({
-        profileSummary: "Customer is interested in scheduled food delivery.",
+        profileSummary: memoryProfileSummary(userText),
         preferences: userText.toLocaleLowerCase().includes("less spicy")
           ? ["less spicy"]
           : [],
-        usualAddress: null,
+        usualAddress: extractUsualAddress(userText),
         paymentBehavior: /\b(payment|pay|cash|card|transfer)\b/i.test(userText)
           ? "Asked about or discussed payment."
           : null,
         complaintHistory: [],
-        repeatOrderPatterns: [],
+        repeatOrderPatterns: /\bsame|again|last time|usual\b/i.test(userText)
+          ? ["repeat order"]
+          : [],
         notes: ["Mock memory update generated from pasted text."]
       });
     }

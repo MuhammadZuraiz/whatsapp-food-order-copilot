@@ -180,6 +180,23 @@ function CustomerSummary({ summary }: { summary: string | null }) {
   ) : null;
 }
 
+function CustomerMemorySummary({
+  summary,
+  used
+}: {
+  summary?: string | null;
+  used?: boolean;
+}) {
+  return used ? (
+    <section className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+      <h2 className="text-lg font-semibold">Customer Memory</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-300">
+        {summary ?? "Customer memory was found and used as advisory context."}
+      </p>
+    </section>
+  ) : null;
+}
+
 function MissingFields({ fields }: { fields: string[] }) {
   return (
     <section className="rounded-md border border-white/10 bg-white/[0.04] p-4">
@@ -420,6 +437,10 @@ export function ManualChatAnalyzer() {
             <>
               <OrderSummary result={result} />
               <CustomerSummary summary={result.analysis.customerSummary} />
+              <CustomerMemorySummary
+                summary={result.analysis.customerMemorySummary}
+                used={result.analysis.customerMemoryUsed}
+              />
               <MissingFields fields={result.analysis.order.missingFields} />
               <SuggestedReplies replies={result.analysis.suggestedReplies} />
               <WarningList warnings={result.analysis.warnings} />

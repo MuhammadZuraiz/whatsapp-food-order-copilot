@@ -93,6 +93,8 @@ export const manualChatOrderAnalysisSchema = z.object({
 export const manualChatAnalysisSchema = z.object({
   source: manualChatAnalysisSourceSchema,
   customerSummary: z.string().nullable(),
+  customerMemoryUsed: z.boolean().optional(),
+  customerMemorySummary: z.string().nullable().optional(),
   intent: analysisIntentSchema,
   orderLikely: z.boolean(),
   order: manualChatOrderAnalysisSchema,

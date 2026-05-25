@@ -12,7 +12,7 @@ This repository currently includes the Milestone 6 foundation: the monorepo, app
 - `apps/api/src/modules/chat`: manual paste parser, rule extractor, optional AI merge layer, and suggested reply templates
 - `apps/api/src/modules/chats`: exported `.txt` chat import endpoint
 - `apps/api/src/modules/brandStyle`: brand style profile analysis and retrieval
-- `apps/dashboard`: React, Vite, Tailwind dashboard with Manual Chat Analyzer, Menu / Products, Import Chats, and Brand Style pages
+- `apps/dashboard`: React, Vite, Tailwind dashboard with Manual Chat Analyzer, Menu / Products, Import Chats, Brand Style, and Customers pages
 - `apps/extension`: Chrome Manifest V3 extension shell
 - `packages/shared`: shared TypeScript types and Zod schemas
 - root workspace config for pnpm and TypeScript
@@ -155,6 +155,8 @@ Use the Import Chats page to paste or upload exported WhatsApp `.txt` chats. Imp
 
 Use the Brand Style page to view the saved style profile or analyze stored business messages. Brand style affects suggested-reply wording only; backend safety rules, missing-field checks, product facts, and payment rules still win.
 
+Use the Customers page to view repeat customer memory, profile summaries, usual address, preferences, notes, recent conversations, and recent likely orders. Customer memory is advisory only: it can help wording such as asking whether to use a usual address, but current-chat details and missing-field safety always win.
+
 Run both API and dashboard:
 
 ```sh
@@ -192,13 +194,18 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 - `DELETE /api/products/:id`
 - `GET /api/customers`
 - `GET /api/customers/:id`
+- `GET /api/customers/:id/timeline`
 - `POST /api/customers`
+- `PATCH /api/customers/:id`
 - `POST /api/customers/:id/notes`
+- `POST /api/customers/:id/refresh-memory`
 - `GET /api/orders`
 - `GET /api/orders/:id`
 - `PATCH /api/orders/:id`
 
 Request bodies are validated with Zod. Invalid request bodies return `400`; missing records return `404`.
+
+`GET /api/customers` supports `search`, `limit`, and `offset` query parameters and returns conversation/order/note counts plus last conversation date. `GET /api/customers/:id` returns parsed preferences, customer notes, recent conversations, and recent orders.
 
 ## AI Config And Test Endpoints
 
@@ -384,6 +391,72 @@ Invoke-RestMethod -Method Post `
 ```
 
 Brand style profiles store short tone summaries, common phrases, rules, and short example-like reply patterns. They do not store full imported chat transcripts.
+
+## Customer Memory Sample
+
+Import a repeat customer chat:
+
+```powershell
+$sample = @"
+24/05/2026, 7:15 PM - Customer: Hi, can I order again?
+24/05/2026, 7:16 PM - My Business: Sure, what would you like this time?
+24/05/2026, 7:20 PM - Customer: Same Chicken Biryani Tray as last time, less spicy
+24/05/2026, 7:21 PM - Customer: Deliver to Villa 12, Street 4, Gulberg
+24/05/2026, 7:22 PM - My Business: Noted, I'll keep it less spicy and use Villa 12, Street 4, Gulberg.
+"@
+
+$body = @{
+  chatName = "Repeat Customer"
+  customerKey = "repeat-customer-1"
+  businessSenderNames = @("My Business", "Business", "You")
+  rawText = $sample
+  runBrandStyleAnalysis = $false
+  runCustomerMemoryUpdate = $true
+} | ConvertTo-Json -Depth 10
+
+$import = Invoke-RestMethod -Method Post `
+  -Uri http://localhost:4000/api/chats/import `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Refresh memory from stored chats:
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "http://localhost:4000/api/customers/$($import.customer.id)/refresh-memory"
+```
+
+Expected memory includes a less-spicy preference and usual address if the configured AI provider extracts them. With the mock provider, the usual address is extracted from `Deliver to Villa 12, Street 4, Gulberg`.
+
+Test analyzer with memory:
+
+```powershell
+$sample = @"
+24/05/2026, 7:15 PM - Customer: Hi, same as usual for tomorrow dinner?
+24/05/2026, 7:16 PM - Customer: Less spicy please
+"@
+
+$body = @{
+  chatName = "Repeat Customer"
+  customerKey = "repeat-customer-1"
+  businessSenderNames = @("My Business", "Business", "You")
+  rawText = $sample
+  useAi = $true
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:4000/api/chat/analyze-manual `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Expected analyzer behavior:
+
+- `customerMemoryUsed = true`
+- suggestions may ask whether to use the usual item/address
+- required fields such as `items`, `quantity`, `address`, `paymentMethod`, and `paymentStatus` remain missing until confirmed in the current chat
+- no automatic confirmation or sending behavior
 
 ## Project Shape
 

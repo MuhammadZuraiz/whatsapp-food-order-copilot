@@ -3,6 +3,11 @@ import { toJsonField } from "../../utils/jsonFields.js";
 import type { BrandStyleProfileDto } from "@wfo/shared";
 import { getCurrentBrandStyleProfile } from "../brandStyle/brandStyle.service.js";
 import { findOrCreateCustomer } from "../customers/customerLookup.js";
+import {
+  customerMemorySummary,
+  getCustomerMemoryByLookup,
+  type CustomerMemoryContext
+} from "../customers/customerMemory.js";
 import type {
   ManualChatAnalysis,
   ManualChatAnalysisRequest,
@@ -44,31 +49,45 @@ function isAiAnalyzerEnabled() {
 
 function buildRuleBasedAnalysis(
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
-  products: MenuProductContext[] = []
+  products: MenuProductContext[] = [],
+  customerMemory: CustomerMemoryContext | null = null
 ): ManualChatAnalysis {
   return {
     ...analysisWithoutReplies,
     source: "rule_based",
     customerSummary: null,
-    suggestedReplies: buildSuggestedReplies(analysisWithoutReplies, products)
+    customerMemoryUsed: Boolean(customerMemory),
+    customerMemorySummary: customerMemorySummary(customerMemory),
+    suggestedReplies: buildSuggestedReplies(
+      analysisWithoutReplies,
+      products,
+      customerMemory
+    )
   };
 }
 
 function buildAiFallbackAnalysis(
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
   warning: string,
-  products: MenuProductContext[] = []
+  products: MenuProductContext[] = [],
+  customerMemory: CustomerMemoryContext | null = null
 ): ManualChatAnalysis {
   const fallbackAnalysis = {
     ...analysisWithoutReplies,
     source: "ai_fallback" as const,
     customerSummary: null,
+    customerMemoryUsed: Boolean(customerMemory),
+    customerMemorySummary: customerMemorySummary(customerMemory),
     warnings: [...analysisWithoutReplies.warnings, warning]
   };
 
   return {
     ...fallbackAnalysis,
-    suggestedReplies: buildSuggestedReplies(fallbackAnalysis, products)
+    suggestedReplies: buildSuggestedReplies(
+      fallbackAnalysis,
+      products,
+      customerMemory
+    )
   };
 }
 
@@ -77,10 +96,15 @@ async function buildAnalysis(
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
   messages: ManualChatAnalysisResponse["messages"],
   products: MenuProductContext[],
-  brandStyle: BrandStyleProfileDto | null
+  brandStyle: BrandStyleProfileDto | null,
+  customerMemory: CustomerMemoryContext | null
 ) {
   if (input.useAi !== true) {
-    return buildRuleBasedAnalysis(analysisWithoutReplies, products);
+    return buildRuleBasedAnalysis(
+      analysisWithoutReplies,
+      products,
+      customerMemory
+    );
   }
 
   if (!isAiAnalyzerEnabled()) {
@@ -92,7 +116,8 @@ async function buildAnalysis(
           "AI analyzer is disabled by AI_ANALYZER_ENABLED=false; used rule-based analysis."
         ]
       },
-      products
+      products,
+      customerMemory
     );
   }
 
@@ -101,7 +126,8 @@ async function buildAnalysis(
       messages,
       analysisWithoutReplies,
       products,
-      brandStyle
+      brandStyle,
+      customerMemory
     );
   } catch (error) {
     console.warn(
@@ -112,7 +138,8 @@ async function buildAnalysis(
     return buildAiFallbackAnalysis(
       analysisWithoutReplies,
       "AI-assisted analysis failed; used rule-based fallback.",
-      products
+      products,
+      customerMemory
     );
   }
 }
@@ -131,6 +158,7 @@ export async function analyzeManualChat(
   ).map(toMenuProductContext);
   const dedupedProducts = dedupeMenuProducts(products);
   const brandStyle = await getCurrentBrandStyleProfile();
+  const customerMemory = await getCustomerMemoryByLookup(input);
   const analysisWithoutReplies = extractOrderRules(
     parsed.messages,
     parsed.warnings,
@@ -141,7 +169,8 @@ export async function analyzeManualChat(
     analysisWithoutReplies,
     parsed.messages,
     dedupedProducts,
-    brandStyle
+    brandStyle,
+    customerMemory
   );
 
   const stored = await prisma.$transaction(async (transaction) => {

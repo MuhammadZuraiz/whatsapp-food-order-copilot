@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { prisma } from "../../db/prisma.js";
 
 export type CustomerLookupInput = {
   chatName: string;
@@ -6,20 +7,35 @@ export type CustomerLookupInput = {
   customerPhone?: string;
 };
 
+function getCustomerLookupWhere(input: CustomerLookupInput) {
+  const customerPhone = input.customerPhone?.trim();
+  const customerKey = input.customerKey?.trim();
+
+  return customerPhone
+    ? { phoneRaw: customerPhone }
+    : customerKey
+      ? { phoneHash: customerKey }
+      : { displayName: input.chatName };
+}
+
+export async function findCustomerByLookup(input: CustomerLookupInput) {
+  return prisma.customer.findFirst({
+    where: getCustomerLookupWhere(input),
+    orderBy: {
+      updatedAt: "desc"
+    }
+  });
+}
+
 export async function findOrCreateCustomer(
   transaction: Prisma.TransactionClient,
   input: CustomerLookupInput
 ) {
   const customerPhone = input.customerPhone?.trim();
   const customerKey = input.customerKey?.trim();
-  const where = customerPhone
-    ? { phoneRaw: customerPhone }
-    : customerKey
-      ? { phoneHash: customerKey }
-      : { displayName: input.chatName };
 
   const existingCustomer = await transaction.customer.findFirst({
-    where,
+    where: getCustomerLookupWhere(input),
     orderBy: {
       updatedAt: "desc"
     }
