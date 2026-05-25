@@ -1,11 +1,41 @@
 import { useState } from "react";
+import { BrandStylePage } from "./pages/BrandStylePage";
+import { ImportChatsPage } from "./pages/ImportChatsPage";
 import { ManualChatAnalyzer } from "./pages/ManualChatAnalyzer";
 import { ProductsPage } from "./pages/ProductsPage";
 
-type Page = "analyzer" | "products";
+type Page = "analyzer" | "products" | "import" | "brandStyle";
+
+const pages: Array<{
+  id: Page;
+  label: string;
+}> = [
+  {
+    id: "analyzer",
+    label: "Manual Chat Analyzer"
+  },
+  {
+    id: "products",
+    label: "Menu / Products"
+  },
+  {
+    id: "import",
+    label: "Import Chats"
+  },
+  {
+    id: "brandStyle",
+    label: "Brand Style"
+  }
+];
 
 export function App() {
   const [page, setPage] = useState<Page>("analyzer");
+  const currentPage = {
+    analyzer: <ManualChatAnalyzer />,
+    products: <ProductsPage />,
+    import: <ImportChatsPage />,
+    brandStyle: <BrandStylePage />
+  }[page];
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -17,34 +47,26 @@ export function App() {
             </p>
             <h1 className="text-lg font-semibold">Local Business Console</h1>
           </div>
-          <div className="flex gap-2">
-            <button
-              className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
-                page === "analyzer"
-                  ? "bg-emerald-300 text-emerald-950"
-                  : "border border-white/10 text-neutral-100 hover:border-white/30"
-              }`}
-              onClick={() => setPage("analyzer")}
-              type="button"
-            >
-              Manual Chat Analyzer
-            </button>
-            <button
-              className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
-                page === "products"
-                  ? "bg-emerald-300 text-emerald-950"
-                  : "border border-white/10 text-neutral-100 hover:border-white/30"
-              }`}
-              onClick={() => setPage("products")}
-              type="button"
-            >
-              Menu / Products
-            </button>
+          <div className="flex flex-wrap gap-2">
+            {pages.map((item) => (
+              <button
+                className={`rounded-md px-3 py-2 text-sm font-semibold transition ${
+                  page === item.id
+                    ? "bg-emerald-300 text-emerald-950"
+                    : "border border-white/10 text-neutral-100 hover:border-white/30"
+                }`}
+                key={item.id}
+                onClick={() => setPage(item.id)}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
         </nav>
       </header>
 
-      {page === "analyzer" ? <ManualChatAnalyzer /> : <ProductsPage />}
+      {currentPage}
     </div>
   );
 }

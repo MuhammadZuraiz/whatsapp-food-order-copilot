@@ -26,7 +26,7 @@ export function createApp() {
     next();
   });
 
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "10mb" }));
 
   app.get("/health", (_request, response) => {
     const health: AppHealth = {

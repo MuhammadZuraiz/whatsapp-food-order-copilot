@@ -110,6 +110,58 @@ export const manualChatAnalysisResponseSchema = z.object({
   analysis: manualChatAnalysisSchema
 });
 
+export const brandStyleProfileDtoSchema = z.object({
+  id: z.string(),
+  toneSummary: z.string().nullable(),
+  commonPhrases: z.array(z.string()),
+  doRules: z.array(z.string()),
+  dontRules: z.array(z.string()),
+  exampleReplies: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string()
+});
+
+export const chatImportRequestSchema = z.object({
+  chatName: z.string().trim().min(1),
+  customerKey: z.string().trim().min(1).optional(),
+  customerPhone: z.string().trim().min(1).optional(),
+  businessSenderNames: z.array(z.string().trim().min(1)).min(1),
+  rawText: z.string().trim().min(1),
+  runBrandStyleAnalysis: z.boolean().optional().default(false),
+  runCustomerMemoryUpdate: z.boolean().optional().default(false)
+});
+
+export const chatImportResponseSchema = z.object({
+  conversation: z.object({
+    id: z.string(),
+    chatName: z.string(),
+    source: z.literal("imported_txt")
+  }),
+  customer: z.object({
+    id: z.string(),
+    displayName: z.string()
+  }),
+  import: z.object({
+    messageCount: z.number().int().nonnegative(),
+    businessMessageCount: z.number().int().nonnegative(),
+    customerMessageCount: z.number().int().nonnegative(),
+    warnings: z.array(z.string())
+  }),
+  brandStyle: z.object({
+    updated: z.boolean(),
+    profile: brandStyleProfileDtoSchema.nullable()
+  })
+});
+
+export const brandStyleAnalyzeRequestSchema = z.object({
+  conversationIds: z.array(z.string().trim().min(1)).optional(),
+  businessSenderNames: z
+    .array(z.string().trim().min(1))
+    .optional()
+    .default(["My Business", "Business", "You"]),
+  limit: z.number().int().min(1).max(500).optional().default(200)
+});
+
 export type SenderType = z.infer<typeof senderTypeSchema>;
 
 export type ParsedChatMessage = z.infer<typeof parsedChatMessageSchema>;
@@ -138,4 +190,16 @@ export type ManualChatAnalysis = z.infer<typeof manualChatAnalysisSchema>;
 
 export type ManualChatAnalysisResponse = z.infer<
   typeof manualChatAnalysisResponseSchema
+>;
+
+export type BrandStyleProfileDto = z.infer<
+  typeof brandStyleProfileDtoSchema
+>;
+
+export type ChatImportRequest = z.infer<typeof chatImportRequestSchema>;
+
+export type ChatImportResponse = z.infer<typeof chatImportResponseSchema>;
+
+export type BrandStyleAnalyzeRequest = z.infer<
+  typeof brandStyleAnalyzeRequestSchema
 >;

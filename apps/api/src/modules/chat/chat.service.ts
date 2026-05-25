@@ -1,6 +1,8 @@
-import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma.js";
 import { toJsonField } from "../../utils/jsonFields.js";
+import type { BrandStyleProfileDto } from "@wfo/shared";
+import { getCurrentBrandStyleProfile } from "../brandStyle/brandStyle.service.js";
+import { findOrCreateCustomer } from "../customers/customerLookup.js";
 import type {
   ManualChatAnalysis,
   ManualChatAnalysisRequest,
@@ -74,7 +76,8 @@ async function buildAnalysis(
   input: ManualChatAnalysisRequest,
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
   messages: ManualChatAnalysisResponse["messages"],
-  products: MenuProductContext[]
+  products: MenuProductContext[],
+  brandStyle: BrandStyleProfileDto | null
 ) {
   if (input.useAi !== true) {
     return buildRuleBasedAnalysis(analysisWithoutReplies, products);
@@ -97,7 +100,8 @@ async function buildAnalysis(
     return await buildAiAssistedAnalysis(
       messages,
       analysisWithoutReplies,
-      products
+      products,
+      brandStyle
     );
   } catch (error) {
     console.warn(
@@ -113,38 +117,6 @@ async function buildAnalysis(
   }
 }
 
-async function findOrCreateCustomer(
-  transaction: Prisma.TransactionClient,
-  input: ManualChatAnalysisRequest
-) {
-  const customerPhone = input.customerPhone?.trim();
-  const customerKey = input.customerKey?.trim();
-  const where = customerPhone
-    ? { phoneRaw: customerPhone }
-    : customerKey
-      ? { phoneHash: customerKey }
-      : { displayName: input.chatName };
-
-  const existingCustomer = await transaction.customer.findFirst({
-    where,
-    orderBy: {
-      updatedAt: "desc"
-    }
-  });
-
-  if (existingCustomer) {
-    return existingCustomer;
-  }
-
-  return transaction.customer.create({
-    data: {
-      displayName: input.chatName,
-      phoneRaw: customerPhone,
-      phoneHash: customerKey
-    }
-  });
-}
-
 export async function analyzeManualChat(
   input: ManualChatAnalysisRequest
 ): Promise<ManualChatAnalysisResponse> {
@@ -158,6 +130,7 @@ export async function analyzeManualChat(
     })
   ).map(toMenuProductContext);
   const dedupedProducts = dedupeMenuProducts(products);
+  const brandStyle = await getCurrentBrandStyleProfile();
   const analysisWithoutReplies = extractOrderRules(
     parsed.messages,
     parsed.warnings,
@@ -167,7 +140,8 @@ export async function analyzeManualChat(
     input,
     analysisWithoutReplies,
     parsed.messages,
-    dedupedProducts
+    dedupedProducts,
+    brandStyle
   );
 
   const stored = await prisma.$transaction(async (transaction) => {

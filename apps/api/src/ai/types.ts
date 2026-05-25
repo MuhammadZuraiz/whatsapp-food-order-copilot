@@ -72,6 +72,24 @@ function normalizeStringArray(value: unknown) {
     : [];
 }
 
+function normalizeStringList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/\n|;|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
 function normalizeQuantity(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.trunc(value);
@@ -264,6 +282,50 @@ function getRawSuggestions(value: unknown) {
   return [];
 }
 
+function normalizeBrandStyleAnalysis(value: unknown) {
+  const source = isRecord(value) && isRecord(value.brandStyle)
+    ? value.brandStyle
+    : value;
+
+  if (!isRecord(source)) {
+    return {
+      toneSummary: null,
+      commonPhrases: [],
+      doRules: [],
+      dontRules: [],
+      exampleReplies: []
+    };
+  }
+
+  return {
+    toneSummary:
+      textFromUnknown(source.toneSummary) ||
+      textFromUnknown(source.tone) ||
+      textFromUnknown(source.summary) ||
+      null,
+    commonPhrases: normalizeStringList(
+      source.commonPhrases ?? source.phrases ?? source.common_phrases
+    ),
+    doRules: normalizeStringList(
+      source.doRules ?? source.dos ?? source.do ?? source.do_rules
+    ),
+    dontRules: normalizeStringList(
+      source.dontRules ??
+        source.donts ??
+        source.doNotRules ??
+        source.dont_rules ??
+        source["don'tRules"]
+    ),
+    exampleReplies: normalizeStringList(
+      source.exampleReplies ??
+        source.examples ??
+        source.sampleReplies ??
+        source.replies ??
+        source.example_replies
+    )
+  };
+}
+
 export const aiSuggestedRepliesResultSchema = z.preprocess(
   (value) => ({
     suggestions: getRawSuggestions(value)
@@ -285,13 +347,16 @@ export const aiSuggestedRepliesResultSchema = z.preprocess(
   })
 );
 
-export const brandStyleAnalysisResultSchema = z.object({
-  toneSummary: z.string(),
-  commonPhrases: z.array(z.string()),
-  doRules: z.array(z.string()),
-  dontRules: z.array(z.string()),
-  exampleReplies: z.array(z.string())
-});
+export const brandStyleAnalysisResultSchema = z.preprocess(
+  normalizeBrandStyleAnalysis,
+  z.object({
+    toneSummary: z.string().nullable(),
+    commonPhrases: z.array(z.string()),
+    doRules: z.array(z.string()),
+    dontRules: z.array(z.string()),
+    exampleReplies: z.array(z.string())
+  })
+);
 
 export const aiTestTaskSchema = z.enum([
   "generate",

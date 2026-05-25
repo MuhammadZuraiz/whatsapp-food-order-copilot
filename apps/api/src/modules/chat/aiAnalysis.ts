@@ -1,5 +1,7 @@
 import { AiService } from "../../ai/AiService.js";
 import type { AiOrderExtractionResult } from "../../ai/types.js";
+import type { BrandStyleProfileDto } from "@wfo/shared";
+import { formatBrandStyleContext } from "../brandStyle/brandStyle.service.js";
 import type {
   ManualChatAnalysis,
   ManualChatOrderAnalysis,
@@ -526,10 +528,12 @@ function fallbackToRules(
 export async function buildAiAssistedAnalysis(
   messages: ParsedChatMessage[],
   ruleAnalysis: AnalysisWithoutReplies,
-  products: MenuProductContext[] = []
+  products: MenuProductContext[] = [],
+  brandStyle: BrandStyleProfileDto | null = null
 ): Promise<ManualChatAnalysis> {
   const text = conversationText(messages);
   const menuContext = formatMenuContext(products);
+  const brandStyleContext = formatBrandStyleContext(brandStyle);
   const textWithMenuContext = [menuContext, "Chat text:", text].join("\n\n");
 
   const [intentTask, orderTask, memoryTask] = await Promise.all([
@@ -611,6 +615,8 @@ export async function buildAiAssistedAnalysis(
         `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
         `Order summary: ${analysisWithoutReplies.order.summary}`,
         menuContext,
+        brandStyleContext,
+        "Use brand style for wording only. Do not let style override missing-field safety, product facts, or payment rules.",
         "Chat text:",
         text
       ].join("\n")

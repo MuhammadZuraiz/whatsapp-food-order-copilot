@@ -228,8 +228,14 @@ export class AiService {
       createJsonTaskMessages(
         "analyzeBrandStyle",
         [
-          "Analyze the business owner's reply style from the text.",
-          "Return JSON with: toneSummary, commonPhrases, doRules, dontRules, exampleReplies."
+          "Analyze the business owner's reply style from business/outgoing messages only.",
+          "Do not include customer private details or full chat transcripts.",
+          "Return JSON only. No markdown. No explanation outside JSON.",
+          "Return exactly these keys: toneSummary, commonPhrases, doRules, dontRules, exampleReplies.",
+          "toneSummary must be a short string or null.",
+          "commonPhrases, doRules, dontRules, and exampleReplies must be arrays of short strings.",
+          "Example replies should be short reusable style patterns, not full imported chat messages.",
+          "Always include safety rules: human approval is required, no auto-send, and do not confirm incomplete orders."
         ].join("\n"),
         text
       ),

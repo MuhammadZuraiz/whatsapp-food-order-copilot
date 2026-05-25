@@ -2,7 +2,7 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 5A foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, basic dashboard, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, and a hardened OpenAI-compatible provider configuration path.
+This repository currently includes the Milestone 6 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, menu/product knowledge, historical chat import, brand style learning, and a hardened OpenAI-compatible provider configuration path.
 
 ## What Is Included
 
@@ -10,7 +10,9 @@ This repository currently includes the Milestone 5A foundation: the monorepo, ap
 - `apps/api/prisma`: Prisma schema for the local SQLite database
 - `apps/api/src/ai`: AI provider abstraction, mock provider, OpenAI-compatible provider, and task service
 - `apps/api/src/modules/chat`: manual paste parser, rule extractor, optional AI merge layer, and suggested reply templates
-- `apps/dashboard`: React, Vite, Tailwind manual chat analyzer page with an AI assistance toggle
+- `apps/api/src/modules/chats`: exported `.txt` chat import endpoint
+- `apps/api/src/modules/brandStyle`: brand style profile analysis and retrieval
+- `apps/dashboard`: React, Vite, Tailwind dashboard with Manual Chat Analyzer, Menu / Products, Import Chats, and Brand Style pages
 - `apps/extension`: Chrome Manifest V3 extension shell
 - `packages/shared`: shared TypeScript types and Zod schemas
 - root workspace config for pnpm and TypeScript
@@ -23,6 +25,8 @@ This repository currently includes the Milestone 5A foundation: the monorepo, ap
 - automatic message sending
 
 The assistant must never auto-send WhatsApp messages. Future reply insertion should only happen after a human click, and sending remains manual.
+
+Historical chat import uses exported WhatsApp `.txt` text only. There is still no WhatsApp Web scraping, DOM reading, reply insertion, or auto-send behavior.
 
 ## Requirements
 
@@ -145,6 +149,12 @@ Open the dashboard and use the Manual Chat Analyzer to paste an exported WhatsAp
 
 Use the `Use AI assistance` toggle to send `useAi: true`. The analyzer still starts with the deterministic Milestone 2 parser and extractor, then optionally asks the AI service for intent, order extraction, customer summary, and suggested replies. If AI fails, the API returns `analysis.source = "ai_fallback"` and uses the rule-based result.
 
+Use the Menu / Products page to maintain active menu context. Active products are included in analyzer prompts and rule-based item matching, but the product list is context only and is not treated as proof of an order.
+
+Use the Import Chats page to paste or upload exported WhatsApp `.txt` chats. Imports store parsed conversations/messages locally as `source = imported_txt`. If the customer memory or brand style checkboxes are enabled and `AI_PROVIDER=openai-compatible` is configured, the imported text needed for those AI tasks is sent to the configured provider. With `AI_PROVIDER=mock`, those tasks stay local and deterministic.
+
+Use the Brand Style page to view the saved style profile or analyze stored business messages. Brand style affects suggested-reply wording only; backend safety rules, missing-field checks, product facts, and payment rules still win.
+
 Run both API and dashboard:
 
 ```sh
@@ -172,7 +182,10 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 - `GET /health`
 - `GET /api/ai/config`
 - `POST /api/ai/test`
+- `GET /api/brand-style`
+- `POST /api/brand-style/analyze`
 - `POST /api/chat/analyze-manual`
+- `POST /api/chats/import`
 - `GET /api/products`
 - `POST /api/products`
 - `PATCH /api/products/:id`
@@ -300,7 +313,77 @@ With AI assistance enabled, expected behavior also includes:
 - `analysis.customerSummary` may contain a short current-chat summary
 - payment questions such as `What payment methods do you accept?` do not select a payment method by themselves
 
-No database migration is needed for Milestone 4. Optional manual customer identity hints are accepted as `customerKey` or `customerPhone`; without those, the analyzer continues to fall back to `chatName`.
+No database migration is needed for Milestone 6. Optional manual customer identity hints are accepted as `customerKey` or `customerPhone`; without those, the analyzer continues to fall back to `chatName`.
+
+## Historical Chat Import Sample
+
+PowerShell import example:
+
+```powershell
+$sample = @"
+24/05/2026, 7:15 PM - Customer: Hi, can I see the menu?
+24/05/2026, 7:16 PM - My Business: Sure, I'll send it now.
+24/05/2026, 7:20 PM - Customer: I want 2 Chicken Biryani Tray for tomorrow dinner
+24/05/2026, 7:21 PM - My Business: Sure, I can arrange that for tomorrow dinner.
+24/05/2026, 7:22 PM - Customer: Less spicy please
+24/05/2026, 7:23 PM - My Business: Noted, I'll make it less spicy.
+24/05/2026, 7:24 PM - Customer: What payment methods do you accept?
+24/05/2026, 7:25 PM - My Business: We accept cash or bank transfer. Please send your delivery address so I can confirm the details.
+"@
+
+$body = @{
+  chatName = "Historical Customer"
+  businessSenderNames = @("My Business", "Business", "You")
+  rawText = $sample
+  runBrandStyleAnalysis = $true
+  runCustomerMemoryUpdate = $true
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:4000/api/chats/import `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Expected output includes:
+
+```json
+{
+  "conversation": {
+    "source": "imported_txt"
+  },
+  "import": {
+    "messageCount": 8,
+    "businessMessageCount": 4,
+    "customerMessageCount": 4
+  },
+  "brandStyle": {
+    "updated": true
+  }
+}
+```
+
+Check the current brand style:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://localhost:4000/api/brand-style
+```
+
+Analyze stored business messages again:
+
+```powershell
+$body = @{
+  businessSenderNames = @("My Business", "Business", "You")
+  limit = 200
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:4000/api/brand-style/analyze `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Brand style profiles store short tone summaries, common phrases, rules, and short example-like reply patterns. They do not store full imported chat transcripts.
 
 ## Project Shape
 
