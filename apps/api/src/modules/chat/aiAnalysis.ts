@@ -3,11 +3,15 @@ import type { AiOrderExtractionResult } from "../../ai/types.js";
 import type {
   ManualChatAnalysis,
   ManualChatOrderAnalysis,
-  PaymentStatus,
   ParsedChatMessage,
   SuggestedReplyDto
 } from "./chat.schemas.js";
+import { normalizeOrderItems } from "./itemNormalizer.js";
 import { buildMissingFields, buildSummary } from "./orderRuleExtractor.js";
+import {
+  detectPaymentInquiry,
+  normalizePaymentStatusFromEvidence
+} from "./paymentNormalizer.js";
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
 
 type AnalysisWithoutReplies = Omit<ManualChatAnalysis, "suggestedReplies">;
@@ -25,42 +29,6 @@ function conversationText(messages: ParsedChatMessage[]) {
     .join("\n");
 }
 
-function businessText(messages: ParsedChatMessage[]) {
-  return messages
-    .filter((message) => message.senderType === "business")
-    .map((message) => message.text)
-    .join("\n");
-}
-
-function customerText(messages: ParsedChatMessage[]) {
-  return messages
-    .filter((message) => message.senderType === "customer")
-    .map((message) => message.text)
-    .join("\n");
-}
-
-function hasBusinessPaymentConfirmation(messages: ParsedChatMessage[]) {
-  return /\b(payment confirmed|payment received|received your payment|payment has been received)\b/i.test(
-    businessText(messages)
-  );
-}
-
-function hasCustomerPaymentProof(messages: ParsedChatMessage[]) {
-  return /\b(paid|sent payment|sent the payment|transferred|screenshot attached|screenshot|receipt|proof)\b/i.test(
-    customerText(messages)
-  );
-}
-
-function paymentInquiryDetected(messages: ParsedChatMessage[]) {
-  const text = customerText(messages);
-
-  return (
-    /\b(what|which|how|do you|can i|can we).{0,60}\b(payment|pay|cash|card|transfer|methods?|options?|accept)\b/i.test(
-      text
-    ) || /\b(payment methods?|payment options?|how should i pay)\b/i.test(text)
-  );
-}
-
 function preferRuleValue<T>(ruleValue: T | null | undefined, aiValue: T | null | undefined) {
   return ruleValue ?? aiValue ?? null;
 }
@@ -72,43 +40,6 @@ function normalizeQuantity(
   return ruleQuantity ?? aiQuantity ?? null;
 }
 
-function normalizePaymentStatus(
-  ruleStatus: ManualChatOrderAnalysis["paymentStatus"],
-  aiStatus: AiOrderExtractionResult["paymentStatus"],
-  messages: ParsedChatMessage[],
-  paymentMethod: string | null
-): PaymentStatus {
-  if (hasBusinessPaymentConfirmation(messages)) {
-    return "paid_confirmed";
-  }
-
-  if (hasCustomerPaymentProof(messages)) {
-    return "proof_received";
-  }
-
-  if (aiStatus === "paid_confirmed" || ruleStatus === "paid_confirmed") {
-    return "not_discussed";
-  }
-
-  if (ruleStatus === "payment_details_sent" || aiStatus === "payment_details_sent") {
-    return "payment_details_sent";
-  }
-
-  if (ruleStatus === "awaiting_payment" || aiStatus === "awaiting_payment") {
-    return "awaiting_payment";
-  }
-
-  if (paymentMethod) {
-    return "method_selected";
-  }
-
-  if (ruleStatus === "payment_issue" || aiStatus === "payment_issue") {
-    return "payment_issue";
-  }
-
-  return "not_discussed";
-}
-
 function mergeOrder(
   ruleOrder: ManualChatOrderAnalysis,
   aiOrder: AiOrderExtractionResult,
@@ -117,22 +48,25 @@ function mergeOrder(
   const inquiryDetected =
     ruleOrder.paymentInquiryDetected ??
     aiOrder.paymentInquiryDetected ??
-    paymentInquiryDetected(messages);
+    detectPaymentInquiry(messages);
   const paymentMethod = inquiryDetected
     ? ruleOrder.paymentMethod
     : preferRuleValue(ruleOrder.paymentMethod, aiOrder.paymentMethod);
+  const items =
+    ruleOrder.items.length > 0
+      ? ruleOrder.items
+      : normalizeOrderItems(aiOrder.items);
   const orderBase: Omit<ManualChatOrderAnalysis, "missingFields" | "summary"> = {
-    items: unique([...ruleOrder.items, ...aiOrder.items]),
+    items,
     quantity: normalizeQuantity(ruleOrder.quantity, aiOrder.quantity),
     deliveryDate: preferRuleValue(ruleOrder.deliveryDate, aiOrder.deliveryDate),
     deliveryTime: preferRuleValue(ruleOrder.deliveryTime, aiOrder.deliveryTime),
     address: preferRuleValue(ruleOrder.address, aiOrder.address),
     paymentMethod,
-    paymentStatus: normalizePaymentStatus(
+    paymentStatus: normalizePaymentStatusFromEvidence(
       ruleOrder.paymentStatus,
       aiOrder.paymentStatus,
-      messages,
-      paymentMethod
+      messages
     ),
     paymentInquiryDetected: inquiryDetected,
     customRequests: unique([
@@ -197,6 +131,49 @@ function isUnsafeConfirmation(reply: SuggestedReplyDto, missingFields: string[])
   );
 }
 
+function asksForResolvedField(reply: SuggestedReplyDto, missingFields: string[]) {
+  const missing = new Set(missingFields);
+  const text = reply.text.toLocaleLowerCase();
+
+  if (
+    !missing.has("deliveryDate") &&
+    /\b(delivery date|which date|what date|for which date|preferred date)\b/.test(text)
+  ) {
+    return true;
+  }
+
+  if (
+    !missing.has("deliveryTime") &&
+    /\b(delivery time|what time|which time|preferred time|date and time)\b/.test(text)
+  ) {
+    return true;
+  }
+
+  if (!missing.has("address") && /\b(address|location)\b/.test(text)) {
+    return true;
+  }
+
+  if (
+    !missing.has("paymentMethod") &&
+    /\b(payment methods?|payment options?|how would you like to pay|which payment|cash or|bank transfer or)\b/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    !missing.has("paymentStatus") &&
+    /\b(payment proof|proof|screenshot|receipt|payment confirmation|payment completed)\b/.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function sanitizeAiReplies(
   aiReplies: SuggestedReplyDto[],
   analysisWithoutReplies: AnalysisWithoutReplies
@@ -210,6 +187,7 @@ function sanitizeAiReplies(
     if (
       replies.length >= 3 ||
       isUnsafeConfirmation(reply, missingFields) ||
+      asksForResolvedField(reply, missingFields) ||
       replies.some((existingReply) => existingReply.text === reply.text)
     ) {
       continue;

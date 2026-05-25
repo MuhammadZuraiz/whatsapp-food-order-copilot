@@ -189,6 +189,7 @@ export class AiService {
           "Extract food-order details from the chat text.",
           "Required order fields are items, quantity, deliveryDate, deliveryTime, address, paymentMethod, and paymentStatus.",
           "PaymentStatus must be one of: not_discussed, method_selected, payment_details_sent, awaiting_payment, proof_received, paid_confirmed, payment_issue.",
+          "Prefer not_discussed or awaiting_payment instead of method_selected; paymentMethod already captures selected cash/card/transfer.",
           "Only use paid_confirmed if the business explicitly confirms payment.",
           "If the customer asks what payment methods are accepted, set paymentInquiryDetected true but keep paymentMethod null until they choose one.",
           "Return JSON with: items, quantity, deliveryDate, deliveryTime, address, paymentMethod, paymentStatus, paymentInquiryDetected, customRequests, missingFields, summary."

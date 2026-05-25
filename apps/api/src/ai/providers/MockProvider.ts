@@ -41,8 +41,42 @@ function getUserText(messages: AiMessage[]) {
   return content;
 }
 
+function customerOnlyText(text: string) {
+  const lines = text
+    .split("\n")
+    .filter((line) => /\(customer\):/i.test(line))
+    .map((line) => line.replace(/^.*?\(customer\):\s*/i, ""));
+
+  return lines.length > 0 ? lines.join("\n") : text;
+}
+
+function businessOnlyText(text: string) {
+  return text
+    .split("\n")
+    .filter((line) => /\(business\):/i.test(line))
+    .map((line) => line.replace(/^.*?\(business\):\s*/i, ""))
+    .join("\n");
+}
+
+function normalizeItems(items: string[]) {
+  const normalizedItems = [...new Set(items.map((item) => item.toLocaleLowerCase()))];
+
+  return normalizedItems.filter(
+    (item) =>
+      !normalizedItems.some(
+        (otherItem) =>
+          otherItem !== item &&
+          otherItem.length > item.length &&
+          new RegExp(`(^|\\s)${item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\s|$)`).test(
+            otherItem
+          )
+      )
+  );
+}
+
 function classifyIntent(text: string) {
-  const normalized = text.toLocaleLowerCase();
+  const customerText = customerOnlyText(text);
+  const normalized = customerText.toLocaleLowerCase();
 
   if (/\bsame order|same as last|repeat|again\b/.test(normalized)) {
     return {
@@ -98,19 +132,25 @@ function classifyIntent(text: string) {
 }
 
 function extractOrder(text: string) {
-  const normalized = text.toLocaleLowerCase();
+  const customerText = customerOnlyText(text);
+  const businessText = businessOnlyText(text);
+  const normalized = customerText.toLocaleLowerCase();
   const hasTwo = /\b2\b|\btwo\b/.test(normalized);
   const paymentInquiryDetected =
     /\b(what|which|how|do you|can i|can we).{0,60}\b(payment|pay|cash|card|transfer|methods?|options?|accept)\b/i.test(
-      text
-    ) || /\b(payment methods?|payment options?|how should i pay)\b/i.test(text);
+      customerText
+    ) || /\b(payment methods?|payment options?|how should i pay)\b/i.test(customerText);
   const paymentSelectionDetected =
     /\b(i can pay|i will pay|i'll pay|i would like to pay|pay by|pay via|cash is fine|cash works|transfer is fine|bank transfer is fine|card is fine|i prefer)\b/i.test(
-      text
+      customerText
     );
   const items = [];
 
-  if (/\bbiryani\b/.test(normalized)) {
+  if (/\bchicken biryani trays?\b/.test(normalized)) {
+    items.push("chicken biryani trays");
+  } else if (/\bbiryani boxes?\b/.test(normalized)) {
+    items.push("biryani boxes");
+  } else if (/\bbiryani\b/.test(normalized)) {
     items.push("biryani");
   }
 
@@ -128,7 +168,7 @@ function extractOrder(text: string) {
     : /\blunch\b/.test(normalized)
       ? "lunch"
       : null;
-  const addressMatch = text.match(
+  const addressMatch = customerText.match(
     /\b(address|location)\b[^\n.]*(?:[.\n]|$)/i
   );
   const paymentMethod =
@@ -141,13 +181,15 @@ function extractOrder(text: string) {
           : /\bcard\b/.test(normalized)
             ? "card"
             : null;
-  const paymentStatus = /\bpaid|transferred|screenshot|receipt\b/.test(
-    normalized
+  const paymentStatus = /\b(payment received|payment confirmed|received your payment)\b/i.test(
+    businessText
   )
+    ? "paid_confirmed"
+    : /\bpaid|sent payment|payment sent|sent the payment|transferred|screenshot|receipt\b/.test(
+          normalized
+        )
     ? "proof_received"
-    : paymentMethod
-      ? "method_selected"
-      : "not_discussed";
+    : "not_discussed";
   const customRequests = /\bless spicy\b/.test(normalized)
     ? ["less spicy"]
     : [];
@@ -158,11 +200,14 @@ function extractOrder(text: string) {
     deliveryTime ? null : "deliveryTime",
     addressMatch ? null : "address",
     paymentMethod ? null : "paymentMethod",
-    paymentStatus === "proof_received" ? null : "paymentStatus"
+    ["proof_received", "paid_confirmed"].includes(paymentStatus)
+      ? null
+      : "paymentStatus"
   ].filter((field): field is string => field !== null);
+  const normalizedItems = normalizeItems(items);
 
   return {
-    items,
+    items: normalizedItems,
     quantity: hasTwo ? 2 : null,
     deliveryDate,
     deliveryTime,
@@ -173,10 +218,80 @@ function extractOrder(text: string) {
     customRequests,
     missingFields,
     summary:
-      items.length > 0
-        ? `Possible order for ${items.join(", ")}.`
+      normalizedItems.length > 0
+        ? `Possible order for ${normalizedItems.join(", ")}.`
         : "No clear item was detected by the mock provider."
   };
+}
+
+function missingFieldsFromPrompt(text: string) {
+  const match = text.match(/Missing fields:\s*([^\n]+)/i);
+
+  if (!match || match[1].trim().toLocaleLowerCase() === "none") {
+    return [];
+  }
+
+  return match[1]
+    .split(",")
+    .map((field) => field.trim())
+    .filter(Boolean);
+}
+
+function suggestedRepliesForPrompt(text: string) {
+  const missingFields = new Set(missingFieldsFromPrompt(text));
+  const replies: Array<{
+    text: string;
+    type: "clarifying_question" | "confirmation" | "payment_followup";
+    reason: string;
+  }> = [];
+
+  if (missingFields.has("address")) {
+    replies.push({
+      text: "Please send your delivery address/location so I can confirm availability.",
+      type: "clarifying_question",
+      reason: "The delivery address is missing."
+    });
+  }
+
+  if (missingFields.has("paymentMethod")) {
+    replies.push({
+      text: "Which payment method would you prefer: cash, card, or bank transfer?",
+      type: "payment_followup",
+      reason: "The payment method has not been selected yet."
+    });
+  } else if (missingFields.has("paymentStatus")) {
+    replies.push({
+      text: "Please send payment proof once payment is completed so I can verify it.",
+      type: "payment_followup",
+      reason: "Payment is not confirmed yet."
+    });
+  }
+
+  if (missingFields.has("deliveryDate")) {
+    replies.push({
+      text: "Sure, for which date would you like to schedule the delivery?",
+      type: "clarifying_question",
+      reason: "Scheduled delivery date is required."
+    });
+  }
+
+  if (missingFields.has("deliveryTime")) {
+    replies.push({
+      text: "What delivery time would you prefer?",
+      type: "clarifying_question",
+      reason: "Scheduled delivery time is required."
+    });
+  }
+
+  if (replies.length === 0) {
+    replies.push({
+      text: "Thanks, I have the order details. I'll confirm availability for your scheduled delivery.",
+      type: "confirmation",
+      reason: "No missing fields were listed in the analyzer prompt."
+    });
+  }
+
+  return replies.slice(0, 3);
 }
 
 export class MockProvider implements AiProvider {
@@ -208,18 +323,7 @@ export class MockProvider implements AiProvider {
 
     if (task === "generateSuggestedReplies") {
       return JSON.stringify({
-        suggestedReplies: [
-          {
-            text: "Sure, I can help. What delivery date and time would you prefer?",
-            type: "clarifying_question",
-            reason: "Scheduled delivery details need human confirmation."
-          },
-          {
-            text: "Please send your delivery address/location so I can confirm availability.",
-            type: "clarifying_question",
-            reason: "The delivery address may still be missing."
-          }
-        ],
+        suggestedReplies: suggestedRepliesForPrompt(userText),
         safety: {
           requiresHumanApproval: true,
           autoSendAllowed: false

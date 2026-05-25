@@ -21,8 +21,9 @@ export function buildSuggestedReplies(
 ) {
   const replies: SuggestedReplyDto[] = [];
   const missingFields = new Set(analysis.order.missingFields);
+  const hasMissingFields = missingFields.size > 0;
 
-  if (analysis.intent === "menu_request") {
+  if (analysis.intent === "menu_request" && !analysis.orderLikely) {
     addReply(replies, {
       text: "Sure, I can share the menu. Are you looking for delivery on a specific date?",
       type: "menu_response",
@@ -30,9 +31,19 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (analysis.intent === "repeat_order") {
+  if (
+    analysis.intent === "repeat_order" &&
+    (missingFields.has("deliveryDate") || missingFields.has("deliveryTime"))
+  ) {
+    const missingDateAndTime =
+      missingFields.has("deliveryDate") && missingFields.has("deliveryTime");
+
     addReply(replies, {
-      text: "Sure, I can help with the same order. Please confirm the delivery date and time.",
+      text: missingDateAndTime
+        ? "Sure, I can help with the same order. Please confirm the delivery date and time."
+        : missingFields.has("deliveryDate")
+          ? "Sure, I can help with the same order. Which delivery date should I schedule it for?"
+          : "Sure, I can help with the same order. What delivery time would you prefer?",
       type: "confirmation",
       reason: "The customer may be asking to repeat a previous order."
     });
@@ -78,15 +89,23 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (missingFields.has("paymentMethod") || missingFields.has("paymentStatus")) {
+  if (missingFields.has("paymentMethod")) {
     addReply(replies, {
-      text: "Once the order details are confirmed, I'll share the payment options.",
+      text: "Which payment method would you prefer: cash, card, or bank transfer?",
       type: "payment_followup",
-      reason: "Payment is not complete or has not been discussed enough."
+      reason: "The payment method has not been selected yet."
+    });
+  } else if (missingFields.has("paymentStatus")) {
+    addReply(replies, {
+      text: analysis.order.paymentMethod
+        ? `Payment by ${analysis.order.paymentMethod.replaceAll("_", " ")} is noted. Please send payment proof once it is completed so I can verify it.`
+        : "Please send payment proof once payment is completed so I can verify it.",
+      type: "payment_followup",
+      reason: "Payment method is selected, but payment is not confirmed yet."
     });
   }
 
-  if (analysis.orderLikely && missingFields.size === 0 && replies.length < 2) {
+  if (analysis.orderLikely && !hasMissingFields && replies.length < 2) {
     addReply(replies, {
       text: "I have noted this as a scheduled delivery request. I'll confirm availability before finalizing it.",
       type: "confirmation",
@@ -94,7 +113,7 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (analysis.orderLikely && missingFields.size === 0 && replies.length < 3) {
+  if (analysis.orderLikely && !hasMissingFields && replies.length < 3) {
     addReply(replies, {
       text: "Thanks, I have the order details. I'll confirm availability for your scheduled delivery.",
       type: "confirmation",
@@ -102,7 +121,7 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (analysis.orderLikely && missingFields.size > 0 && replies.length < 2) {
+  if (analysis.orderLikely && hasMissingFields && replies.length < 2) {
     addReply(replies, {
       text: "Please share the missing details so I can review availability for your scheduled delivery.",
       type: "clarifying_question",
