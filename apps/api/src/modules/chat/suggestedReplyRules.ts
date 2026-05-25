@@ -2,6 +2,7 @@ import type {
   ManualChatAnalysis,
   SuggestedReplyDto
 } from "./chat.schemas.js";
+import type { MenuProductContext } from "./menuContext.js";
 
 function addReply(
   replies: SuggestedReplyDto[],
@@ -16,18 +17,73 @@ function addReply(
   }
 }
 
+function productLabel(product: MenuProductContext) {
+  return product.price === null
+    ? product.name
+    : `${product.name} (AED ${product.price})`;
+}
+
+function productsSummary(products: MenuProductContext[]) {
+  return products.slice(0, 4).map(productLabel).join(", ");
+}
+
+function normalizeText(value: string) {
+  return value.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function findMatchedProduct(
+  analysis: Omit<ManualChatAnalysis, "suggestedReplies">,
+  products: MenuProductContext[]
+) {
+  const orderItems = analysis.order.items.map(normalizeText);
+
+  return products.find((product) =>
+    orderItems.includes(normalizeText(product.name))
+  );
+}
+
+function isAvailableForPreorder(product: MenuProductContext) {
+  return /\bavailable for pre-?order\b/i.test(product.availability ?? "");
+}
+
+function preorderPrefix(product: MenuProductContext | undefined) {
+  return product && isAvailableForPreorder(product)
+    ? `${product.name} is available for pre-order. `
+    : "";
+}
+
 export function buildSuggestedReplies(
-  analysis: Omit<ManualChatAnalysis, "suggestedReplies">
+  analysis: Omit<ManualChatAnalysis, "suggestedReplies">,
+  products: MenuProductContext[] = []
 ) {
   const replies: SuggestedReplyDto[] = [];
   const missingFields = new Set(analysis.order.missingFields);
   const hasMissingFields = missingFields.size > 0;
+  const matchedProduct = findMatchedProduct(analysis, products);
 
   if (analysis.intent === "menu_request" && !analysis.orderLikely) {
     addReply(replies, {
-      text: "Sure, I can share the menu. Are you looking for delivery on a specific date?",
+      text:
+        products.length > 0
+          ? `Sure, our current menu includes ${productsSummary(products)}. Are you looking for delivery on a specific date?`
+          : "I’ll check the current menu details and share them with you. Are you looking for delivery on a specific date?",
       type: "menu_response",
-      reason: "The customer appears to be asking for menu options."
+      reason:
+        products.length > 0
+          ? "The customer appears to be asking for menu options, and active products are available."
+          : "The customer appears to be asking for menu options, but no active products are saved yet."
+    });
+  }
+
+  if (
+    ["price_question", "availability_question"].includes(analysis.intent) &&
+    !analysis.orderLikely &&
+    products.length > 0
+  ) {
+    addReply(replies, {
+      text: `The current saved menu includes ${productsSummary(products)}. Please confirm which item and delivery date you’re considering.`,
+      type: "menu_response",
+      reason: "The customer is asking about menu details and active product context is available."
     });
   }
 
@@ -44,7 +100,7 @@ export function buildSuggestedReplies(
         : missingFields.has("deliveryDate")
           ? "Sure, I can help with the same order. Which delivery date should I schedule it for?"
           : "Sure, I can help with the same order. What delivery time would you prefer?",
-      type: "confirmation",
+      type: "clarifying_question",
       reason: "The customer may be asking to repeat a previous order."
     });
   }
@@ -83,7 +139,7 @@ export function buildSuggestedReplies(
 
   if (missingFields.has("address")) {
     addReply(replies, {
-      text: "Please send your delivery address/location so I can confirm availability.",
+      text: `${preorderPrefix(matchedProduct)}Please send your delivery address/location so I can continue.`,
       type: "clarifying_question",
       reason: "The delivery address is missing."
     });
@@ -91,7 +147,10 @@ export function buildSuggestedReplies(
 
   if (missingFields.has("paymentMethod")) {
     addReply(replies, {
-      text: "Which payment method would you prefer: cash, card, or bank transfer?",
+      text:
+        missingFields.has("address") || !matchedProduct
+          ? "Which payment method would you prefer: cash, card, or bank transfer?"
+          : `${preorderPrefix(matchedProduct)}Which payment method would you prefer: cash, card, or bank transfer?`,
       type: "payment_followup",
       reason: "The payment method has not been selected yet."
     });

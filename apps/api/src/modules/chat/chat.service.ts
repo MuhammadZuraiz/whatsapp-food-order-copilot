@@ -9,6 +9,11 @@ import type {
 import { buildAiAssistedAnalysis } from "./aiAnalysis.js";
 import { extractOrderRules } from "./orderRuleExtractor.js";
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
+import {
+  dedupeMenuProducts,
+  toMenuProductContext,
+  type MenuProductContext
+} from "./menuContext.js";
 import { parseWhatsAppExport } from "./whatsappParser.js";
 
 const manualPasteSource = "manual_paste" as const;
@@ -36,19 +41,21 @@ function isAiAnalyzerEnabled() {
 }
 
 function buildRuleBasedAnalysis(
-  analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">
+  analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
+  products: MenuProductContext[] = []
 ): ManualChatAnalysis {
   return {
     ...analysisWithoutReplies,
     source: "rule_based",
     customerSummary: null,
-    suggestedReplies: buildSuggestedReplies(analysisWithoutReplies)
+    suggestedReplies: buildSuggestedReplies(analysisWithoutReplies, products)
   };
 }
 
 function buildAiFallbackAnalysis(
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
-  warning: string
+  warning: string,
+  products: MenuProductContext[] = []
 ): ManualChatAnalysis {
   const fallbackAnalysis = {
     ...analysisWithoutReplies,
@@ -59,31 +66,39 @@ function buildAiFallbackAnalysis(
 
   return {
     ...fallbackAnalysis,
-    suggestedReplies: buildSuggestedReplies(fallbackAnalysis)
+    suggestedReplies: buildSuggestedReplies(fallbackAnalysis, products)
   };
 }
 
 async function buildAnalysis(
   input: ManualChatAnalysisRequest,
   analysisWithoutReplies: Omit<ManualChatAnalysis, "suggestedReplies">,
-  messages: ManualChatAnalysisResponse["messages"]
+  messages: ManualChatAnalysisResponse["messages"],
+  products: MenuProductContext[]
 ) {
   if (input.useAi !== true) {
-    return buildRuleBasedAnalysis(analysisWithoutReplies);
+    return buildRuleBasedAnalysis(analysisWithoutReplies, products);
   }
 
   if (!isAiAnalyzerEnabled()) {
-    return buildRuleBasedAnalysis({
-      ...analysisWithoutReplies,
-      warnings: [
-        ...analysisWithoutReplies.warnings,
-        "AI analyzer is disabled by AI_ANALYZER_ENABLED=false; used rule-based analysis."
-      ]
-    });
+    return buildRuleBasedAnalysis(
+      {
+        ...analysisWithoutReplies,
+        warnings: [
+          ...analysisWithoutReplies.warnings,
+          "AI analyzer is disabled by AI_ANALYZER_ENABLED=false; used rule-based analysis."
+        ]
+      },
+      products
+    );
   }
 
   try {
-    return await buildAiAssistedAnalysis(messages, analysisWithoutReplies);
+    return await buildAiAssistedAnalysis(
+      messages,
+      analysisWithoutReplies,
+      products
+    );
   } catch (error) {
     console.warn(
       `[AI] Manual chat analyzer failed; using rule-based fallback. ${
@@ -92,7 +107,8 @@ async function buildAnalysis(
     );
     return buildAiFallbackAnalysis(
       analysisWithoutReplies,
-      "AI-assisted analysis failed; used rule-based fallback."
+      "AI-assisted analysis failed; used rule-based fallback.",
+      products
     );
   }
 }
@@ -133,14 +149,25 @@ export async function analyzeManualChat(
   input: ManualChatAnalysisRequest
 ): Promise<ManualChatAnalysisResponse> {
   const parsed = parseWhatsAppExport(input.rawText, input.businessSenderNames);
+  const products = (
+    await prisma.product.findMany({
+      where: {
+        isActive: true
+      },
+      orderBy: [{ updatedAt: "desc" }, { name: "asc" }]
+    })
+  ).map(toMenuProductContext);
+  const dedupedProducts = dedupeMenuProducts(products);
   const analysisWithoutReplies = extractOrderRules(
     parsed.messages,
-    parsed.warnings
+    parsed.warnings,
+    dedupedProducts
   );
   const analysis = await buildAnalysis(
     input,
     analysisWithoutReplies,
-    parsed.messages
+    parsed.messages,
+    dedupedProducts
   );
 
   const stored = await prisma.$transaction(async (transaction) => {

@@ -9,6 +9,10 @@ import type {
 import { normalizeOrderItems } from "./itemNormalizer.js";
 import { buildMissingFields, buildSummary } from "./orderRuleExtractor.js";
 import {
+  formatMenuContext,
+  type MenuProductContext
+} from "./menuContext.js";
+import {
   detectPaymentInquiry,
   normalizePaymentStatusFromEvidence
 } from "./paymentNormalizer.js";
@@ -145,6 +149,26 @@ function isUnsafeConfirmation(
   );
 }
 
+function hasNearFinalConfirmationWording(text: string) {
+  return /\b(confirm the order|order confirmed|proceed with (the |your )?order|finali[sz]e (the |your )?order|selected details|ready to confirm)\b/i.test(
+    text
+  );
+}
+
+function asksForPaymentStatusBeforeMethod(
+  reply: SuggestedReplyDto,
+  order: ManualChatOrderAnalysis
+) {
+  const missing = new Set(order.missingFields);
+
+  return (
+    missing.has("paymentMethod") &&
+    /\b(payment proof|proof|receipt|screenshot|payment confirmation|payment completed|sent the payment|paid|transferred)\b/i.test(
+      reply.text
+    )
+  );
+}
+
 function asksForResolvedField(
   reply: SuggestedReplyDto,
   order: ManualChatOrderAnalysis
@@ -161,6 +185,10 @@ function asksForResolvedField(
       text
     )
   ) {
+    return true;
+  }
+
+  if (asksForPaymentStatusBeforeMethod(reply, order)) {
     return true;
   }
 
@@ -203,24 +231,246 @@ function asksForResolvedField(
   return false;
 }
 
+function normalizeText(value: string) {
+  return value.toLocaleLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function hasAvailablePreorderProduct(
+  order: ManualChatOrderAnalysis,
+  products: MenuProductContext[]
+) {
+  return findAvailablePreorderProduct(order, products) !== null;
+}
+
+function findAvailablePreorderProduct(
+  order: ManualChatOrderAnalysis,
+  products: MenuProductContext[]
+) {
+  const orderItems = order.items.map(normalizeText);
+
+  return (
+    products.find(
+      (product) =>
+        orderItems.includes(normalizeText(product.name)) &&
+        /\bavailable for pre-?order\b/i.test(product.availability ?? "")
+    ) ?? null
+  );
+}
+
+function buildClarifyingReplyForMissingFields(
+  order: ManualChatOrderAnalysis,
+  products: MenuProductContext[]
+): SuggestedReplyDto {
+  const missing = new Set(order.missingFields);
+  const product = findAvailablePreorderProduct(order, products);
+  const prefix = product ? `${product.name} is available for pre-order. ` : "";
+
+  if (missing.has("address")) {
+    return {
+      text: `${prefix}Please send your delivery address/location so I can continue.`,
+      type: "clarifying_question",
+      reason: "Required order details are still missing."
+    };
+  }
+
+  if (missing.has("paymentMethod")) {
+    return {
+      text: `${prefix}Which payment method would you prefer: cash, card, or bank transfer?`,
+      type: "payment_followup",
+      reason: "The payment method has not been selected yet."
+    };
+  }
+
+  if (missing.has("paymentStatus")) {
+    return {
+      text: order.paymentMethod
+        ? `Payment by ${order.paymentMethod.replaceAll("_", " ")} is noted. Please send payment proof once it is completed so I can verify it.`
+        : "Which payment method would you prefer: cash, card, or bank transfer?",
+      type: order.paymentMethod ? "payment_followup" : "clarifying_question",
+      reason: order.paymentMethod
+        ? "Payment method is selected, but payment is not confirmed yet."
+        : "The payment method has not been selected yet."
+    };
+  }
+
+  if (missing.has("deliveryDate")) {
+    return {
+      text: "Sure, for which date would you like to schedule the delivery?",
+      type: "clarifying_question",
+      reason: "This business only supports future scheduled deliveries."
+    };
+  }
+
+  if (missing.has("deliveryTime")) {
+    return {
+      text: "What delivery time would you prefer?",
+      type: "clarifying_question",
+      reason: "The delivery time is missing."
+    };
+  }
+
+  if (missing.has("quantity")) {
+    return {
+      text: "How many portions, boxes, or trays would you like?",
+      type: "clarifying_question",
+      reason: "The requested quantity is missing."
+    };
+  }
+
+  return {
+    text: "Sure, what items would you like to order?",
+    type: "clarifying_question",
+    reason: "The order items are not clear yet."
+  };
+}
+
+function rewriteUnsafeMissingFieldReply(
+  reply: SuggestedReplyDto,
+  order: ManualChatOrderAnalysis,
+  products: MenuProductContext[]
+): SuggestedReplyDto {
+  if (order.missingFields.length === 0) {
+    return reply;
+  }
+
+  if (hasNearFinalConfirmationWording(reply.text)) {
+    return buildClarifyingReplyForMissingFields(order, products);
+  }
+
+  if (reply.type === "confirmation") {
+    return {
+      ...reply,
+      type: "clarifying_question",
+      reason:
+        reply.reason || "Required order details are still missing."
+    };
+  }
+
+  return reply;
+}
+
+function asksForAddress(reply: SuggestedReplyDto) {
+  return /\b(address|location)\b/i.test(reply.text);
+}
+
+function asksForPaymentMethod(reply: SuggestedReplyDto) {
+  return (
+    /\b(payment method|payment option|how would you like to pay|which payment|cash|card|bank transfer)\b/i.test(
+      reply.text
+    ) &&
+    !/\b(payment proof|proof|receipt|screenshot|payment confirmation|payment completed|sent the payment|paid|transferred)\b/i.test(
+      reply.text
+    )
+  );
+}
+
+function asksForPaymentStatus(reply: SuggestedReplyDto) {
+  return /\b(payment proof|proof|receipt|screenshot|payment confirmation|payment completed|sent the payment|paid|transferred)\b/i.test(
+    reply.text
+  );
+}
+
+function addUniqueReply(
+  replies: SuggestedReplyDto[],
+  reply: SuggestedReplyDto | undefined
+) {
+  if (!reply || replies.some((existingReply) => existingReply.text === reply.text)) {
+    return;
+  }
+
+  replies.push(reply);
+}
+
+function prioritizeMissingFieldReplies(
+  safeAiReplies: SuggestedReplyDto[],
+  templateReplies: SuggestedReplyDto[],
+  order: ManualChatOrderAnalysis
+) {
+  if (order.missingFields.length === 0) {
+    return [...safeAiReplies, ...templateReplies].filter(
+      (reply, index, replies) =>
+        replies.findIndex((existingReply) => existingReply.text === reply.text) ===
+        index
+    );
+  }
+
+  const missing = new Set(order.missingFields);
+  const prioritizedReplies: SuggestedReplyDto[] = [];
+  const preferredReplies = [...templateReplies, ...safeAiReplies];
+
+  if (missing.has("address")) {
+    addUniqueReply(prioritizedReplies, preferredReplies.find(asksForAddress));
+  }
+
+  if (missing.has("paymentMethod")) {
+    addUniqueReply(
+      prioritizedReplies,
+      preferredReplies.find(asksForPaymentMethod)
+    );
+  } else if (missing.has("paymentStatus")) {
+    addUniqueReply(
+      prioritizedReplies,
+      preferredReplies.find(asksForPaymentStatus)
+    );
+  }
+
+  for (const reply of [...safeAiReplies, ...templateReplies]) {
+    addUniqueReply(prioritizedReplies, reply);
+
+    if (prioritizedReplies.length >= 3) {
+      break;
+    }
+  }
+
+  return prioritizedReplies;
+}
+
+function hasContradictoryAvailabilityReply(
+  reply: SuggestedReplyDto,
+  order: ManualChatOrderAnalysis,
+  products: MenuProductContext[]
+) {
+  const text = reply.text.toLocaleLowerCase();
+
+  return (
+    hasAvailablePreorderProduct(order, products) &&
+    /\bavailable\b/.test(text) &&
+    /\b(need to|needs to|must|manual).{0,40}\bconfirm\b.{0,25}\bavailability\b|\bconfirm\b.{0,25}\bavailability\b/i.test(
+      reply.text
+    )
+  );
+}
+
 function sanitizeAiReplies(
   aiReplies: SuggestedReplyDto[],
-  analysisWithoutReplies: AnalysisWithoutReplies
+  analysisWithoutReplies: AnalysisWithoutReplies,
+  products: MenuProductContext[]
 ) {
-  const templateReplies = buildSuggestedReplies(analysisWithoutReplies);
+  const templateReplies = buildSuggestedReplies(analysisWithoutReplies, products);
   const safeAiReplies: SuggestedReplyDto[] = [];
 
   for (const reply of aiReplies) {
+    const rewrittenReply = rewriteUnsafeMissingFieldReply(
+      reply,
+      analysisWithoutReplies.order,
+      products
+    );
+
     if (
       safeAiReplies.length >= 3 ||
-      isUnsafeConfirmation(reply, analysisWithoutReplies.order) ||
-      asksForResolvedField(reply, analysisWithoutReplies.order) ||
-      safeAiReplies.some((existingReply) => existingReply.text === reply.text)
+      isUnsafeConfirmation(rewrittenReply, analysisWithoutReplies.order) ||
+      asksForResolvedField(rewrittenReply, analysisWithoutReplies.order) ||
+      hasContradictoryAvailabilityReply(
+        rewrittenReply,
+        analysisWithoutReplies.order,
+        products
+      ) ||
+      safeAiReplies.some((existingReply) => existingReply.text === rewrittenReply.text)
     ) {
       continue;
     }
 
-    safeAiReplies.push(reply);
+    safeAiReplies.push(rewrittenReply);
   }
 
   if (safeAiReplies.length === 0) {
@@ -230,18 +480,11 @@ function sanitizeAiReplies(
     };
   }
 
-  const replies = [...safeAiReplies];
-
-  for (const reply of templateReplies) {
-    if (
-      replies.length >= 3 ||
-      replies.some((existingReply) => existingReply.text === reply.text)
-    ) {
-      continue;
-    }
-
-    replies.push(reply);
-  }
+  const replies = prioritizeMissingFieldReplies(
+    safeAiReplies,
+    templateReplies,
+    analysisWithoutReplies.order
+  ).slice(0, 3);
 
   return {
     suggestedReplies: replies,
@@ -264,7 +507,8 @@ async function runAiTask<T>(
 
 function fallbackToRules(
   ruleAnalysis: AnalysisWithoutReplies,
-  warnings: string[]
+  warnings: string[],
+  products: MenuProductContext[]
 ): ManualChatAnalysis {
   const fallbackAnalysis = {
     ...ruleAnalysis,
@@ -275,19 +519,22 @@ function fallbackToRules(
 
   return {
     ...fallbackAnalysis,
-    suggestedReplies: buildSuggestedReplies(fallbackAnalysis)
+    suggestedReplies: buildSuggestedReplies(fallbackAnalysis, products)
   };
 }
 
 export async function buildAiAssistedAnalysis(
   messages: ParsedChatMessage[],
-  ruleAnalysis: AnalysisWithoutReplies
+  ruleAnalysis: AnalysisWithoutReplies,
+  products: MenuProductContext[] = []
 ): Promise<ManualChatAnalysis> {
   const text = conversationText(messages);
+  const menuContext = formatMenuContext(products);
+  const textWithMenuContext = [menuContext, "Chat text:", text].join("\n\n");
 
   const [intentTask, orderTask, memoryTask] = await Promise.all([
-    runAiTask((service) => service.classifyIntent(text)),
-    runAiTask((service) => service.extractOrder(text)),
+    runAiTask((service) => service.classifyIntent(textWithMenuContext)),
+    runAiTask((service) => service.extractOrder(textWithMenuContext)),
     runAiTask((service) => service.updateCustomerMemory(text))
   ]);
   const taskWarnings: string[] = [];
@@ -317,7 +564,7 @@ export async function buildAiAssistedAnalysis(
     return fallbackToRules(ruleAnalysis, [
       "Critical AI analysis tasks failed; returned rule-based fallback.",
       ...taskWarnings
-    ]);
+    ], products);
   }
 
   const mergedOrder = orderTask.usedFallback
@@ -363,6 +610,7 @@ export async function buildAiAssistedAnalysis(
         `Order likely: ${analysisWithoutReplies.orderLikely}`,
         `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
         `Order summary: ${analysisWithoutReplies.order.summary}`,
+        menuContext,
         "Chat text:",
         text
       ].join("\n")
@@ -376,13 +624,14 @@ export async function buildAiAssistedAnalysis(
         ...analysisWithoutReplies.warnings,
         "Suggested replies AI task failed; template replies used."
       ],
-      suggestedReplies: buildSuggestedReplies(analysisWithoutReplies)
+      suggestedReplies: buildSuggestedReplies(analysisWithoutReplies, products)
     };
   }
 
   const safeReplies = sanitizeAiReplies(
     repliesTask.value.suggestions,
-    analysisWithoutReplies
+    analysisWithoutReplies,
+    products
   );
 
   if (safeReplies.usedTemplateFallback) {

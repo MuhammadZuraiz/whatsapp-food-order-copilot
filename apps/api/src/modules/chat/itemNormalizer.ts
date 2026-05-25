@@ -1,4 +1,5 @@
 import type { ParsedChatMessage } from "./chat.schemas.js";
+import type { MenuProductContext } from "./menuContext.js";
 
 const numberWords = new Map([
   ["one", 1],
@@ -48,6 +49,24 @@ function normalizeText(text: string) {
     .trim();
 }
 
+function normalizeForMatching(text: string) {
+  return normalizeText(text).replace(/\b(box|boxes|tray|trays|platter|platters)\b/g, (unit) => {
+    if (unit === "box") {
+      return "boxes";
+    }
+
+    if (unit === "tray") {
+      return "trays";
+    }
+
+    if (unit === "platter") {
+      return "platters";
+    }
+
+    return unit;
+  });
+}
+
 function parseQuantityValue(value: string) {
   const normalized = value.toLocaleLowerCase();
   const quantity = numberWords.get(normalized) ?? Number(normalized);
@@ -61,6 +80,10 @@ function hasOrderIntent(text: string) {
   );
 }
 
+function escapeRegex(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function hasQuantityItem(text: string) {
   return new RegExp(quantityItemRegex).test(text);
 }
@@ -69,8 +92,60 @@ function isPotentialOrderItemMessage(text: string) {
   return hasQuantityItem(text) || (hasOrderIntent(text) && new RegExp(itemRegex).test(text));
 }
 
+function hasProductMatch(text: string, products: MenuProductContext[]) {
+  const normalizedText = normalizeForMatching(text);
+
+  return products.some((product) =>
+    normalizedText.includes(normalizeForMatching(product.name))
+  );
+}
+
+function isPotentialProductOrderMessage(
+  text: string,
+  products: MenuProductContext[]
+) {
+  return (
+    products.length > 0 &&
+    hasProductMatch(text, products) &&
+    (hasOrderIntent(text) || new RegExp(quantityRegex).test(text))
+  );
+}
+
 function extractItemPhrases(text: string) {
   return [...text.matchAll(itemRegex)].map((match) => match[1]);
+}
+
+function extractProductItems(text: string, products: MenuProductContext[]) {
+  const normalizedText = normalizeForMatching(text);
+
+  return products
+    .filter((product) => {
+      const normalizedName = normalizeForMatching(product.name);
+      const directMatch = normalizedText.includes(normalizedName);
+      const productWords = normalizedName
+        .split(" ")
+        .filter((word) => word.length > 2);
+      const phraseMatch =
+        productWords.length >= 2 &&
+        productWords.every((word) =>
+          new RegExp(`\\b${escapeRegex(word)}\\b`).test(normalizedText)
+        );
+
+      return directMatch || phraseMatch;
+    })
+    .map((product) => product.name);
+}
+
+function extractGenericItems(text: string) {
+  const items: string[] = [];
+
+  for (const match of text.matchAll(quantityItemRegex)) {
+    items.push(match[2]);
+  }
+
+  items.push(...extractItemPhrases(text));
+
+  return normalizeOrderItems(items);
 }
 
 function isContainedPhrase(shortItem: string, longItem: string) {
@@ -102,30 +177,39 @@ export function normalizeOrderItems(items: string[]) {
 }
 
 export function extractItemsAndQuantityFromMessages(
-  messages: ParsedChatMessage[]
+  messages: ParsedChatMessage[],
+  products: MenuProductContext[] = []
 ) {
   const items: string[] = [];
   let quantity: number | null = null;
 
   for (const message of messages) {
-    if (message.senderType !== "customer" || !isPotentialOrderItemMessage(message.text)) {
+    if (
+      message.senderType !== "customer" ||
+      (!isPotentialOrderItemMessage(message.text) &&
+        !isPotentialProductOrderMessage(message.text, products))
+    ) {
       continue;
     }
 
+    const productItems = extractProductItems(message.text, products);
+    items.push(...productItems);
+
     for (const match of message.text.matchAll(quantityItemRegex)) {
       quantity ??= parseQuantityValue(match[1]);
-      items.push(match[2]);
     }
 
     for (const match of message.text.matchAll(quantityRegex)) {
       quantity ??= parseQuantityValue(match[1]);
     }
 
-    items.push(...extractItemPhrases(message.text));
+    if (productItems.length === 0) {
+      items.push(...extractGenericItems(message.text));
+    }
   }
 
   return {
-    items: normalizeOrderItems(items),
+    items: [...new Set(items.map((item) => item.trim()).filter(Boolean))],
     quantity
   };
 }

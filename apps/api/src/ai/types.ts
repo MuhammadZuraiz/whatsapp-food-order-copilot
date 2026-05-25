@@ -53,20 +53,6 @@ export const intentClassificationResultSchema = z.object({
   reason: z.string()
 });
 
-export const aiOrderExtractionResultSchema = z.object({
-  items: z.array(z.string()),
-  quantity: z.union([z.number().int().positive(), z.string()]).nullable(),
-  deliveryDate: z.string().nullable(),
-  deliveryTime: z.string().nullable(),
-  address: z.string().nullable(),
-  paymentMethod: z.string().nullable(),
-  paymentStatus: aiPaymentStatusSchema,
-  paymentInquiryDetected: z.boolean().optional(),
-  customRequests: z.array(z.string()),
-  missingFields: z.array(z.string()),
-  summary: z.string()
-});
-
 const nullableStringFromUnknownSchema = z.preprocess(
   (value) => (typeof value === "string" ? value : null),
   z.string().nullable()
@@ -78,6 +64,96 @@ const stringArrayFromUnknownSchema = z.preprocess(
       ? value.filter((item): item is string => typeof item === "string")
       : [],
   z.array(z.string())
+);
+
+function normalizeStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function normalizeQuantity(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const numericValue = Number(trimmed);
+
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return Math.trunc(numericValue);
+    }
+
+    return trimmed || null;
+  }
+
+  return null;
+}
+
+function normalizePaymentStatus(value: unknown) {
+  const status = typeof value === "string" ? value : "not_discussed";
+
+  return aiPaymentStatusSchema.safeParse(status).success
+    ? status
+    : "not_discussed";
+}
+
+function normalizeOrderExtraction(value: unknown) {
+  const source =
+    isRecord(value) && isRecord(value.order) ? value.order : value;
+
+  if (!isRecord(source)) {
+    return {
+      items: [],
+      quantity: null,
+      deliveryDate: null,
+      deliveryTime: null,
+      address: null,
+      paymentMethod: null,
+      paymentStatus: "not_discussed",
+      paymentInquiryDetected: false,
+      customRequests: [],
+      missingFields: [],
+      summary: "AI order extraction returned no usable object."
+    };
+  }
+
+  return {
+    items: normalizeStringArray(source.items),
+    quantity: normalizeQuantity(source.quantity),
+    deliveryDate: textFromUnknown(source.deliveryDate) || null,
+    deliveryTime: textFromUnknown(source.deliveryTime) || null,
+    address: textFromUnknown(source.address) || null,
+    paymentMethod: textFromUnknown(source.paymentMethod) || null,
+    paymentStatus: normalizePaymentStatus(source.paymentStatus),
+    paymentInquiryDetected:
+      typeof source.paymentInquiryDetected === "boolean"
+        ? source.paymentInquiryDetected
+        : undefined,
+    customRequests: normalizeStringArray(source.customRequests),
+    missingFields: normalizeStringArray(source.missingFields),
+    summary:
+      textFromUnknown(source.summary) ||
+      "AI order extraction returned partial details."
+  };
+}
+
+export const aiOrderExtractionResultSchema = z.preprocess(
+  normalizeOrderExtraction,
+  z.object({
+    items: z.array(z.string()),
+    quantity: z.union([z.number().int().positive(), z.string()]).nullable(),
+    deliveryDate: z.string().nullable(),
+    deliveryTime: z.string().nullable(),
+    address: z.string().nullable(),
+    paymentMethod: z.string().nullable(),
+    paymentStatus: aiPaymentStatusSchema,
+    paymentInquiryDetected: z.boolean().optional(),
+    customRequests: z.array(z.string()),
+    missingFields: z.array(z.string()),
+    summary: z.string()
+  })
 );
 
 export const customerMemoryUpdateResultSchema = z

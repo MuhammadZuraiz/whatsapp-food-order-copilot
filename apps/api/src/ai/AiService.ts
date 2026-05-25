@@ -141,6 +141,7 @@ export class AiService {
         "classifyIntent",
         [
           "Classify the customer's intent.",
+          "If available products/menu context is provided, use it as context only, not as proof that the customer ordered every product.",
           "Use one of: menu_request, price_question, availability_question, new_order, repeat_order, custom_request, payment_question, delivery_update, complaint, general_question.",
           "Return JSON with: intent, confidence, orderLikely, reason."
         ].join("\n"),
@@ -158,12 +159,15 @@ export class AiService {
         "extractOrder",
         [
           "Extract food-order details from the chat text.",
+          "If available products/menu context is provided, match customer-requested items to product names from that list when supported by the customer text.",
+          "Do not invent products or prices. Product list items are context, not proof of an order.",
+          "Return JSON only. No markdown. No explanation outside JSON.",
           "Required order fields are items, quantity, deliveryDate, deliveryTime, address, paymentMethod, and paymentStatus.",
           "PaymentStatus must be one of: not_discussed, method_selected, payment_details_sent, awaiting_payment, proof_received, paid_confirmed, payment_issue.",
           "Prefer not_discussed or awaiting_payment instead of method_selected; paymentMethod already captures selected cash/card/transfer.",
           "Only use paid_confirmed if the business explicitly confirms payment.",
           "If the customer asks what payment methods are accepted, set paymentInquiryDetected true but keep paymentMethod null until they choose one.",
-          "Return JSON with: items, quantity, deliveryDate, deliveryTime, address, paymentMethod, paymentStatus, paymentInquiryDetected, customRequests, missingFields, summary."
+          "Return exactly these keys when possible: items, quantity, deliveryDate, deliveryTime, address, paymentMethod, paymentStatus, paymentInquiryDetected, customRequests, missingFields, summary."
         ].join("\n"),
         text
       ),
@@ -199,6 +203,9 @@ export class AiService {
         "generateSuggestedReplies",
         [
           "Generate 2-3 short reply suggestions for the business owner to review.",
+          "If available products/menu context is provided, reference saved products and prices accurately.",
+          "If a product has no price, do not invent one.",
+          "If no products are saved and the customer asks for menu, explain that menu details need to be checked or added manually.",
           "The replies must be human-approved and must not be auto-sent.",
           "Prefer clarifying questions for missing order fields.",
           "Do not sound like the order is confirmed while required fields are missing.",

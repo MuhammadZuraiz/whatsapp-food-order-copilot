@@ -5,6 +5,7 @@ import type {
 } from "./chat.schemas.js";
 import { extractDeliveryDateFromMessages } from "./dateResolver.js";
 import { extractItemsAndQuantityFromMessages } from "./itemNormalizer.js";
+import type { MenuProductContext } from "./menuContext.js";
 import {
   detectPaymentInquiry,
   extractPaymentMethod,
@@ -69,7 +70,11 @@ function extractCustomRequests(customerText: string) {
   const requestRegex =
     /\b(less spicy|spicy|no onion|no mayo|extra [a-z]+|without [a-z]+|allergy|custom|special request)\b/gi;
 
-  return unique([...customerText.matchAll(requestRegex)].map((match) => match[1]));
+  return unique(
+    [...customerText.matchAll(requestRegex)].map((match) =>
+      match[1].toLocaleLowerCase()
+    )
+  );
 }
 
 function determineIntent(
@@ -174,14 +179,15 @@ export function buildSummary(
 
 export function extractOrderRules(
   messages: ParsedChatMessage[],
-  parserWarnings: string[]
+  parserWarnings: string[],
+  products: MenuProductContext[] = []
 ): Omit<ManualChatAnalysis, "suggestedReplies"> {
   const customerText = messages
     .filter((message) => message.senderType === "customer")
     .map((message) => message.text)
     .join("\n");
   const allText = messages.map((message) => message.text).join("\n");
-  const itemsAndQuantity = extractItemsAndQuantityFromMessages(messages);
+  const itemsAndQuantity = extractItemsAndQuantityFromMessages(messages, products);
   const customRequests = extractCustomRequests(customerText);
   const deliveryDate = extractDeliveryDateFromMessages(messages);
   const deliveryTime = extractDeliveryTime(customerText);

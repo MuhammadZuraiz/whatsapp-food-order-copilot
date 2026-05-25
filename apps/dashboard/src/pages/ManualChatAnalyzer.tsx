@@ -1,10 +1,11 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   analyzeManualChat,
   type ManualChatAnalysisResponse,
   type ParsedChatMessage,
   type SuggestedReplyDto
 } from "../api/manualChatApi";
+import { getProducts } from "../api/productsApi";
 
 const defaultBusinessNames = "My Business, Business, You";
 const sampleChat = `24/05/2026, 7:15 PM - Customer: Hi, can I see the menu?
@@ -26,6 +27,17 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium"
   }).format(new Date(value));
+}
+
+function countUniqueActiveProducts(
+  products: Awaited<ReturnType<typeof getProducts>>
+) {
+  return new Set(
+    products
+      .filter((product) => product.isActive)
+      .map((product) => product.name.toLocaleLowerCase().trim())
+      .filter(Boolean)
+  ).size;
 }
 
 function MessageList({ messages }: { messages: ParsedChatMessage[] }) {
@@ -243,6 +255,9 @@ export function ManualChatAnalyzer() {
   const [useAi, setUseAi] = useState(true);
   const [result, setResult] = useState<ManualChatAnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeProductCount, setActiveProductCount] = useState<number | null>(
+    null
+  );
   const [isLoading, setIsLoading] = useState(false);
 
   const parsedBusinessNames = useMemo(
@@ -253,6 +268,26 @@ export function ManualChatAnalyzer() {
         .filter(Boolean),
     [businessNames]
   );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getProducts()
+      .then((products) => {
+        if (isMounted) {
+          setActiveProductCount(countUniqueActiveProducts(products));
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setActiveProductCount(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -341,6 +376,16 @@ export function ManualChatAnalyzer() {
                 type="checkbox"
               />
             </label>
+
+            <p className="rounded-md border border-white/10 bg-neutral-950 px-3 py-2 text-sm text-neutral-300">
+              {activeProductCount === null
+                ? "Menu context unavailable."
+                : activeProductCount > 0
+                  ? `Menu context: ${activeProductCount} unique active ${
+                      activeProductCount === 1 ? "product" : "products"
+                    } loaded.`
+                  : "No menu products added yet."}
+            </p>
 
             <label className="grid gap-2">
               <span className="text-sm font-medium text-neutral-200">

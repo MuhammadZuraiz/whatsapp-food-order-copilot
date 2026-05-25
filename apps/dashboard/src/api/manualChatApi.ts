@@ -13,6 +13,8 @@ export type SuggestedReplyDto = {
     | "confirmation"
     | "menu_response"
     | "payment_followup"
+    | "complaint_response"
+    | "delivery_update"
     | "general";
   reason: string;
 };
