@@ -2,7 +2,7 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 6 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, Chrome Manifest V3 shell, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, menu/product knowledge, historical chat import, brand style learning, and a hardened OpenAI-compatible provider configuration path.
+This repository currently includes the Milestone 8A foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, menu/product knowledge, historical chat import, brand style learning, customer memory, and a first internal Chrome extension bridge for manually analyzing the currently open WhatsApp Web chat.
 
 ## What Is Included
 
@@ -13,20 +13,20 @@ This repository currently includes the Milestone 6 foundation: the monorepo, app
 - `apps/api/src/modules/chats`: exported `.txt` chat import endpoint
 - `apps/api/src/modules/brandStyle`: brand style profile analysis and retrieval
 - `apps/dashboard`: React, Vite, Tailwind dashboard with Manual Chat Analyzer, Menu / Products, Import Chats, Brand Style, and Customers pages
-- `apps/extension`: Chrome Manifest V3 extension shell
+- `apps/extension`: Chrome Manifest V3 extension bridge for manually capturing the currently open visible WhatsApp Web chat
 - `packages/shared`: shared TypeScript types and Zod schemas
 - root workspace config for pnpm and TypeScript
 
 ## Not Implemented Yet
 
-- WhatsApp scraping or DOM reading
+- background WhatsApp scraping or all-chat scanning
 - analytics dashboard
 - automatic WhatsApp message insertion
 - automatic message sending
 
 The assistant must never auto-send WhatsApp messages. Future reply insertion should only happen after a human click, and sending remains manual.
 
-Historical chat import uses exported WhatsApp `.txt` text only. There is still no WhatsApp Web scraping, DOM reading, reply insertion, or auto-send behavior.
+Historical chat import uses exported WhatsApp `.txt` text. The Chrome extension can read the currently open visible WhatsApp Web chat only after the user clicks `Analyze Current Chat`; it does not scan chats in the background, insert replies, or send messages.
 
 ## Requirements
 
@@ -178,6 +178,40 @@ pnpm build:extension
 ```
 
 After building, load `apps/extension/dist` as an unpacked extension in Chrome.
+
+## Chrome Extension Bridge
+
+Milestone 8A adds an internal-use Chrome extension bridge for WhatsApp Web. The extension reads only the currently open visible chat when you click a button. It sends the captured text to the local API at `http://localhost:4000/api/chat/analyze-manual`; the extension never talks directly to Groq/OpenAI-compatible providers.
+
+Use it like this:
+
+```sh
+pnpm dev:api
+pnpm build:extension
+```
+
+Then:
+
+1. Open Chrome and go to `chrome://extensions`.
+2. Enable Developer mode.
+3. Click `Load unpacked`.
+4. Select `apps/extension/dist`.
+5. Open `https://web.whatsapp.com`.
+6. Open one chat.
+7. Click the extension icon.
+8. Click `Analyze Current Chat`.
+9. Review the order summary and suggested replies.
+10. Click `Copy Reply` and paste manually into WhatsApp if you want to use it.
+
+Extension limitations:
+
+- Reads visible loaded messages only.
+- Does not scroll or load older chat history.
+- Does not open, search, or scan other chats.
+- Does not insert text into WhatsApp.
+- Does not auto-send messages.
+- Requires the local API to be running first.
+- WhatsApp DOM selectors can change. The current adapter is versioned as `2026-05-visible-chat-v1` and fails with a clear layout-changed message when capture is not possible.
 
 ## API Routes
 

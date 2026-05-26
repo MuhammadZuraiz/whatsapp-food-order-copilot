@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "WhatsApp Food Order AI Copilot",
   "version": "0.0.0",
-  "description": "Local-first assistant shell for WhatsApp Business food-order workflows.",
+  "description": "Local-first assistant bridge for manually analyzing visible WhatsApp Web food-order chats.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "Food Order Copilot"
@@ -14,9 +14,10 @@
   "content_scripts": [
     {
       "matches": ["https://web.whatsapp.com/*"],
-      "js": ["src/content.js"],
+      "js": ["src/whatsapp/WhatsAppDomAdapter.js", "src/content.js"],
       "run_at": "document_idle"
     }
   ],
-  "permissions": []
+  "permissions": ["activeTab", "clipboardWrite"],
+  "host_permissions": ["http://localhost:4000/*", "https://web.whatsapp.com/*"]
 }
