@@ -45,6 +45,17 @@ function conversationText(messages: ParsedChatMessage[]) {
     .join("\n");
 }
 
+function hasRepeatOrderPhrasing(messages: ParsedChatMessage[]) {
+  const customerText = messages
+    .filter((message) => message.senderType === "customer")
+    .map((message) => message.text)
+    .join("\n");
+
+  return /\b(same as usual|same order|same as last(?: time)?|like last time|last time|repeat order|repeat|order again|again|usual)\b/i.test(
+    customerText
+  );
+}
+
 function preferRuleValue<T>(ruleValue: T | null | undefined, aiValue: T | null | undefined) {
   return ruleValue ?? aiValue ?? null;
 }
@@ -54,6 +65,42 @@ function normalizeQuantity(
   aiQuantity: AiOrderExtractionResult["quantity"]
 ) {
   return ruleQuantity ?? aiQuantity ?? null;
+}
+
+function customerReferencesStoredAddress(messages: ParsedChatMessage[]) {
+  return messages.some(
+    (message) =>
+      message.senderType === "customer" &&
+      /\b(usual|same|last time|saved)\s+(address|location)\b|\b(address|location)\s+(as usual|same as last time|on file)\b/i.test(
+        message.text
+      )
+  );
+}
+
+function normalizeAddress(
+  ruleAddress: ManualChatOrderAnalysis["address"],
+  aiAddress: AiOrderExtractionResult["address"],
+  messages: ParsedChatMessage[]
+) {
+  if (ruleAddress) {
+    return ruleAddress;
+  }
+
+  if (!aiAddress || customerReferencesStoredAddress(messages)) {
+    return null;
+  }
+
+  const normalizedAddress = aiAddress.toLocaleLowerCase().trim();
+
+  if (
+    /^(address|location|usual address|my usual address|same address|saved address)$/.test(
+      normalizedAddress
+    )
+  ) {
+    return null;
+  }
+
+  return aiAddress;
 }
 
 function mergeOrder(
@@ -77,7 +124,7 @@ function mergeOrder(
     quantity: normalizeQuantity(ruleOrder.quantity, aiOrder.quantity),
     deliveryDate: preferRuleValue(ruleOrder.deliveryDate, aiOrder.deliveryDate),
     deliveryTime: preferRuleValue(ruleOrder.deliveryTime, aiOrder.deliveryTime),
-    address: preferRuleValue(ruleOrder.address, aiOrder.address),
+    address: normalizeAddress(ruleOrder.address, aiOrder.address, messages),
     paymentMethod,
     paymentStatus: normalizePaymentStatusFromEvidence(
       ruleOrder.paymentStatus,
@@ -563,6 +610,7 @@ export async function buildAiAssistedAnalysis(
   const menuContext = formatMenuContext(products);
   const brandStyleContext = formatBrandStyleContext(brandStyle);
   const customerMemoryContext = formatCustomerMemoryContext(customerMemory);
+  const repeatOrderPhrasingDetected = hasRepeatOrderPhrasing(messages);
   const textWithMenuContext = [menuContext, "Chat text:", text].join("\n\n");
 
   const [intentTask, orderTask, memoryTask] = await Promise.all([
@@ -645,11 +693,13 @@ export async function buildAiAssistedAnalysis(
         `Order likely: ${analysisWithoutReplies.orderLikely}`,
         `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
         `Order summary: ${analysisWithoutReplies.order.summary}`,
+        `Repeat-order phrasing detected: ${repeatOrderPhrasingDetected}`,
         menuContext,
         brandStyleContext,
         customerMemoryContext,
         "Use brand style for wording only. Do not let style override missing-field safety, product facts, or payment rules.",
         "Use customer memory only as advisory wording. Do not mark address, items, or timing complete unless the current chat confirms them.",
+        "If repeat-order phrasing is detected and customer memory has a usual item, preference, or usual address, ask the customer to confirm those remembered details.",
         "Chat text:",
         text
       ].join("\n")

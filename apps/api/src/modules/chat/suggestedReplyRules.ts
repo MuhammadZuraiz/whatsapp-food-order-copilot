@@ -53,17 +53,90 @@ function preorderPrefix(product: MenuProductContext | undefined) {
     : "";
 }
 
-function repeatOrderHint(customerMemory: CustomerMemoryContext | null) {
-  const summary =
-    customerMemory?.recentOrderSummaries[0] ?? customerMemory?.profileSummary;
+function repeatOrderHint(
+  customerMemory: CustomerMemoryContext | null,
+  products: MenuProductContext[]
+) {
+  const memoryText = [
+    customerMemory?.profileSummary,
+    customerMemory?.notes,
+    ...(customerMemory?.preferences ?? []),
+    ...(customerMemory?.recentOrderSummaries ?? [])
+  ]
+    .filter(Boolean)
+    .join("\n");
 
-  if (!summary) {
+  if (!memoryText) {
     return null;
   }
 
-  const chickenBiryaniMatch = summary.match(/chicken biryani tray/i);
+  const normalizedMemory = normalizeText(memoryText);
+  const matchedProduct = products.find((product) =>
+    normalizedMemory.includes(normalizeText(product.name))
+  );
 
-  return chickenBiryaniMatch ? "Chicken Biryani Tray" : null;
+  if (matchedProduct) {
+    return matchedProduct.name;
+  }
+
+  const itemMatch = memoryText.match(
+    /\b((?:chicken|beef)\s+biryani\s+tray|(?:chicken|beef)\s+biryani|biryani\s+(?:box|boxes|tray|trays)|pasta\s+(?:box|boxes)|dessert\s+platter)\b/i
+  );
+
+  return itemMatch?.[1] ?? null;
+}
+
+function isRepeatOrderRequest(
+  analysis: Omit<ManualChatAnalysis, "suggestedReplies">
+) {
+  return analysis.intent === "repeat_order";
+}
+
+function preferencePhrase(customerMemory: CustomerMemoryContext | null) {
+  const preferences = customerMemory?.preferences.filter(
+    (preference) =>
+      !/\b(repeat order|same as usual|same order|order again|last time|usual)\b/i.test(
+        preference
+      ) &&
+      !/\b((?:chicken|beef)\s+biryani\s+tray|(?:chicken|beef)\s+biryani|biryani\s+(?:box|boxes|tray|trays)|pasta\s+(?:box|boxes)|dessert\s+platter)\b/i.test(
+        preference
+      )
+  );
+
+  return preferences && preferences.length > 0
+    ? preferences.slice(0, 2).join(", ")
+    : null;
+}
+
+function deliveryPhrase(
+  order: Omit<ManualChatAnalysis, "suggestedReplies">["order"]
+) {
+  if (order.deliveryDate && order.deliveryTime) {
+    return `for ${order.deliveryTime}`;
+  }
+
+  if (order.deliveryTime) {
+    return `for ${order.deliveryTime}`;
+  }
+
+  if (order.deliveryDate) {
+    return "for the scheduled date";
+  }
+
+  return "";
+}
+
+function buildUsualItemReplyText(
+  item: string,
+  analysis: Omit<ManualChatAnalysis, "suggestedReplies">,
+  customerMemory: CustomerMemoryContext | null
+) {
+  const preference = preferencePhrase(customerMemory);
+  const details = [item, preference, deliveryPhrase(analysis.order)]
+    .filter(Boolean)
+    .join(", ");
+
+  return `Would you like your usual ${details}?`;
 }
 
 export function buildSuggestedReplies(
@@ -75,6 +148,10 @@ export function buildSuggestedReplies(
   const missingFields = new Set(analysis.order.missingFields);
   const hasMissingFields = missingFields.size > 0;
   const matchedProduct = findMatchedProduct(analysis, products);
+  const repeatRequest = isRepeatOrderRequest(analysis);
+  const usualOrder = repeatRequest
+    ? repeatOrderHint(customerMemory, products)
+    : null;
 
   if (analysis.intent === "menu_request" && !analysis.orderLikely) {
     addReply(replies, {
@@ -102,6 +179,18 @@ export function buildSuggestedReplies(
     });
   }
 
+  if (missingFields.has("items")) {
+    addReply(replies, {
+      text: usualOrder
+        ? buildUsualItemReplyText(usualOrder, analysis, customerMemory)
+        : "Sure, what items would you like to order?",
+      type: "clarifying_question",
+      reason: usualOrder
+        ? "Customer memory suggests a usual order, but the current chat has not confirmed the item."
+        : "The order items are not clear yet."
+    });
+  }
+
   if (
     analysis.intent === "repeat_order" &&
     (missingFields.has("deliveryDate") || missingFields.has("deliveryTime"))
@@ -120,17 +209,19 @@ export function buildSuggestedReplies(
     });
   }
 
-  if (missingFields.has("items")) {
-    const usualOrder = repeatOrderHint(customerMemory);
-
+  if (repeatRequest && missingFields.has("address") && customerMemory?.usualAddress) {
     addReply(replies, {
-      text: usualOrder
-        ? `Would you like the usual ${usualOrder}, or should I use a different item this time?`
-        : "Sure, what items would you like to order?",
+      text: `Should I use your usual address: ${customerMemory.usualAddress}, or a different location?`,
       type: "clarifying_question",
-      reason: usualOrder
-        ? "Customer memory suggests a usual order, but the current chat has not confirmed the item."
-        : "The order items are not clear yet."
+      reason: "The current chat has no confirmed address, but the customer has a usual address on file."
+    });
+  }
+
+  if (repeatRequest && missingFields.has("paymentMethod")) {
+    addReply(replies, {
+      text: "Which payment method would you prefer: cash, card, or bank transfer?",
+      type: "payment_followup",
+      reason: "The payment method has not been selected yet."
     });
   }
 

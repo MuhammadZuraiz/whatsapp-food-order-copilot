@@ -61,7 +61,13 @@ function extractAddress(messages: ParsedChatMessage[]) {
 
   const addressMessage = messages
     .filter((message) => message.senderType === "customer")
-    .find((message) => addressKeywordRegex.test(message.text));
+    .find(
+      (message) =>
+        addressKeywordRegex.test(message.text) &&
+        !/\b(usual|same|last time|saved)\s+(address|location)\b|\b(address|location)\s+(as usual|same as last time|on file)\b/i.test(
+          message.text
+        )
+    );
 
   return addressMessage?.text.trim() ?? null;
 }
@@ -87,7 +93,11 @@ function determineIntent(
     return "complaint";
   }
 
-  if (/\b(same order|same as last|last time|repeat|again)\b/i.test(customerText)) {
+  if (
+    /\b(same as usual|same order|same as last(?: time)?|like last time|last time|repeat order|repeat|order again|again|usual)\b/i.test(
+      customerText
+    )
+  ) {
     return "repeat_order";
   }
 

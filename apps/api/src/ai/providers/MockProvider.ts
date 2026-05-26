@@ -78,7 +78,11 @@ function classifyIntent(text: string) {
   const customerText = customerOnlyText(text);
   const normalized = customerText.toLocaleLowerCase();
 
-  if (/\bsame order|same as last|repeat|again\b/.test(normalized)) {
+  if (
+    /\b(same as usual|same order|same as last(?: time)?|like last time|last time|repeat order|repeat|order again|again|usual)\b/.test(
+      normalized
+    )
+  ) {
     return {
       intent: "repeat_order",
       confidence: 0.82,

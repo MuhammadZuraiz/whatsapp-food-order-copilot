@@ -75,7 +75,7 @@ function parseQuantityValue(value: string) {
 }
 
 function hasOrderIntent(text: string) {
-  return /\b(i want|i need|i would like|i'd like|can i get|please order|place an order|order|book|deliver|delivery|same order|same as last)\b/i.test(
+  return /\b(i want|i need|i would like|i'd like|can i get|please order|place an order|order|book|deliver|delivery|same order|same as usual|same as last|same\b.{0,40}\blast time|like last time|last time|repeat order|order again|usual)\b/i.test(
     text
   );
 }

@@ -143,6 +143,7 @@ export class AiService {
           "Classify the customer's intent.",
           "If available products/menu context is provided, use it as context only, not as proof that the customer ordered every product.",
           "Use one of: menu_request, price_question, availability_question, new_order, repeat_order, custom_request, payment_question, delivery_update, complaint, general_question.",
+          "Treat phrases like same as usual, same order, same as last time, repeat order, order again, usual, and like last time as repeat_order when the customer appears to be ordering.",
           "Return JSON with: intent, confidence, orderLikely, reason."
         ].join("\n"),
         text
