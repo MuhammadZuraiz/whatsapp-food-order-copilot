@@ -168,6 +168,45 @@ function renderWarnings(warnings: string[]) {
   `;
 }
 
+function renderCapturePreview(capture: PopupCaptureSuccess | null) {
+  const container = getElement("#capture-preview");
+
+  if (!capture) {
+    container.innerHTML = "";
+    return;
+  }
+
+  const lines = capture.rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const firstLines = lines.slice(0, 2);
+  const lastLines = lines.slice(-3);
+  const previewLines =
+    lines.length <= 5
+      ? lines
+      : [...firstLines, "...", ...lastLines];
+
+  container.innerHTML = `
+    <section class="panel preview-panel">
+      <h2>Captured Chat Preview</h2>
+      <dl class="preview-meta">
+        <div><dt>Chat</dt><dd>${escapeHtml(capture.chatName)}</dd></div>
+        <div><dt>Messages</dt><dd>${capture.messageCount}</dd></div>
+        <div><dt>Adapter</dt><dd>${escapeHtml(capture.adapterVersion)}</dd></div>
+      </dl>
+      <pre>${previewLines.map(escapeHtml).join("\n")}</pre>
+      ${
+        capture.warnings.length > 0
+          ? `<ul class="preview-warnings">${capture.warnings
+              .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderError(message: string) {
   getElement("#result").innerHTML = "";
   renderWarnings([message]);
@@ -255,6 +294,7 @@ async function analyzeCurrentChat() {
   const useAi = getElement<HTMLInputElement>("#use-ai").checked;
 
   getElement("#result").innerHTML = "";
+  renderCapturePreview(null);
   renderWarnings([]);
   setText("#activity", "Capturing visible WhatsApp chat...");
   analyzeButton.disabled = true;
@@ -271,6 +311,7 @@ async function analyzeCurrentChat() {
     }
 
     lastCaptureWarnings = capture.warnings;
+    renderCapturePreview(capture);
     setText(
       "#activity",
       `Captured ${capture.messageCount} visible message(s) from ${capture.chatName}. Analyzing...`
@@ -335,6 +376,7 @@ function renderApp() {
       <button id="analyze-button" disabled>Analyze Current Chat</button>
       <p id="activity" class="activity">Open a WhatsApp chat, then analyze visible messages.</p>
 
+      <div id="capture-preview"></div>
       <div id="warnings"></div>
       <div id="result"></div>
     </main>

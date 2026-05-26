@@ -151,6 +151,55 @@ button:disabled {
   line-height: 1.45;
 }
 
+.preview-panel {
+  background: #fbfbf8;
+}
+
+.preview-meta {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+
+.preview-meta div {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+}
+
+.preview-meta dt {
+  color: #666666;
+  font-weight: 700;
+}
+
+.preview-meta dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview-panel pre {
+  overflow: auto;
+  max-height: 120px;
+  margin: 0;
+  border: 1px solid #e7e5df;
+  border-radius: 5px;
+  padding: 8px;
+  background: #ffffff;
+  white-space: pre-wrap;
+  font:
+    11px/1.4 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.preview-warnings {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #7c4a03;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .result-meta {
   display: flex;
   flex-wrap: wrap;

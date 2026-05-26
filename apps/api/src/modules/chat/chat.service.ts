@@ -15,6 +15,7 @@ import type {
 } from "./chat.schemas.js";
 import { buildAiAssistedAnalysis } from "./aiAnalysis.js";
 import { extractOrderRules } from "./orderRuleExtractor.js";
+import { applySuggestedReplyGrounding } from "./chatRelevance.js";
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
 import {
   dedupeMenuProducts,
@@ -172,6 +173,12 @@ export async function analyzeManualChat(
     brandStyle,
     customerMemory
   );
+  const groundedAnalysis = applySuggestedReplyGrounding(
+    analysis,
+    parsed.messages,
+    dedupedProducts,
+    customerMemory
+  );
 
   const stored = await prisma.$transaction(async (transaction) => {
     const customer = await findOrCreateCustomer(transaction, input);
@@ -182,7 +189,7 @@ export async function analyzeManualChat(
         source: manualPasteSource,
         whatsappChatName: input.chatName,
         lastMessageAt: getLastMessageAt(parsed.messages),
-        summary: analysis.order.summary
+        summary: groundedAnalysis.order.summary
       }
     });
 
@@ -199,31 +206,31 @@ export async function analyzeManualChat(
       });
     }
 
-    const order = analysis.orderLikely
+    const order = groundedAnalysis.orderLikely
       ? await transaction.order.create({
           data: {
             customerId: customer.id,
             conversationId: conversation.id,
             status: "draft",
             itemsJson: toJsonField({
-              items: analysis.order.items,
-              quantity: analysis.order.quantity
+              items: groundedAnalysis.order.items,
+              quantity: groundedAnalysis.order.quantity
             }),
-            deliveryDate: toDate(analysis.order.deliveryDate),
-            deliveryTime: analysis.order.deliveryTime,
-            address: analysis.order.address,
-            paymentMethod: analysis.order.paymentMethod,
-            paymentStatus: analysis.order.paymentStatus,
-            customRequestsJson: toJsonField(analysis.order.customRequests),
-            missingFieldsJson: toJsonField(analysis.order.missingFields),
-            summary: analysis.order.summary
+            deliveryDate: toDate(groundedAnalysis.order.deliveryDate),
+            deliveryTime: groundedAnalysis.order.deliveryTime,
+            address: groundedAnalysis.order.address,
+            paymentMethod: groundedAnalysis.order.paymentMethod,
+            paymentStatus: groundedAnalysis.order.paymentStatus,
+            customRequestsJson: toJsonField(groundedAnalysis.order.customRequests),
+            missingFieldsJson: toJsonField(groundedAnalysis.order.missingFields),
+            summary: groundedAnalysis.order.summary
           }
         })
       : null;
 
-    if (analysis.suggestedReplies.length > 0) {
+    if (groundedAnalysis.suggestedReplies.length > 0) {
       await transaction.suggestedReply.createMany({
-        data: analysis.suggestedReplies.map((reply) => ({
+        data: groundedAnalysis.suggestedReplies.map((reply) => ({
           conversationId: conversation.id,
           orderId: order?.id ?? null,
           replyText: reply.text,
@@ -243,6 +250,6 @@ export async function analyzeManualChat(
       source: manualPasteSource
     },
     messages: parsed.messages,
-    analysis
+    analysis: groundedAnalysis
   };
 }

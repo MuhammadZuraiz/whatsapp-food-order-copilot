@@ -89,6 +89,12 @@ function determineIntent(
   hasQuantityOrItems: boolean,
   hasCustomRequests: boolean
 ): ManualChatAnalysis["intent"] {
+  const hasFoodOrderContext =
+    hasQuantityOrItems ||
+    /\b(menu|order|food|meal|tray|box|platter|biryani|pasta|rice|chicken|beef|cake|dessert|payment|pay)\b/i.test(
+      customerText
+    );
+
   if (/\b(complaint|wrong|late|issue|problem|cold|missing item|not good)\b/i.test(allText)) {
     return "complaint";
   }
@@ -122,7 +128,10 @@ function determineIntent(
     return "price_question";
   }
 
-  if (/\b(available|availability|do you have|can you make)\b/i.test(customerText)) {
+  if (
+    hasFoodOrderContext &&
+    /\b(available|availability|do you have|can you make)\b/i.test(customerText)
+  ) {
     return "availability_question";
   }
 
@@ -130,7 +139,10 @@ function determineIntent(
     return "menu_request";
   }
 
-  if (/\b(delivery|deliver|address|location|time)\b/i.test(customerText)) {
+  if (
+    /\b(delivery|deliver)\b/i.test(customerText) ||
+    (hasFoodOrderContext && /\b(address|location|time)\b/i.test(customerText))
+  ) {
     return "delivery_update";
   }
 

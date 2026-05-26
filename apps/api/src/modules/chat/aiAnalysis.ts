@@ -23,6 +23,10 @@ import {
   detectPaymentInquiry,
   normalizePaymentStatusFromEvidence
 } from "./paymentNormalizer.js";
+import {
+  hasRepeatOrderPhrasing,
+  isFoodBusinessRelevantChat
+} from "./chatRelevance.js";
 import { buildSuggestedReplies } from "./suggestedReplyRules.js";
 
 type AnalysisWithoutReplies = Omit<ManualChatAnalysis, "suggestedReplies">;
@@ -43,17 +47,6 @@ function conversationText(messages: ParsedChatMessage[]) {
       return `${sender} (${message.senderType}): ${message.text}`;
     })
     .join("\n");
-}
-
-function hasRepeatOrderPhrasing(messages: ParsedChatMessage[]) {
-  const customerText = messages
-    .filter((message) => message.senderType === "customer")
-    .map((message) => message.text)
-    .join("\n");
-
-  return /\b(same as usual|same order|same as last(?: time)?|like last time|last time|repeat order|repeat|order again|again|usual)\b/i.test(
-    customerText
-  );
 }
 
 function preferRuleValue<T>(ruleValue: T | null | undefined, aiValue: T | null | undefined) {
@@ -611,6 +604,7 @@ export async function buildAiAssistedAnalysis(
   const brandStyleContext = formatBrandStyleContext(brandStyle);
   const customerMemoryContext = formatCustomerMemoryContext(customerMemory);
   const repeatOrderPhrasingDetected = hasRepeatOrderPhrasing(messages);
+  const foodBusinessRelevant = isFoodBusinessRelevantChat(messages);
   const textWithMenuContext = [menuContext, "Chat text:", text].join("\n\n");
 
   const [intentTask, orderTask, memoryTask] = await Promise.all([
@@ -693,12 +687,15 @@ export async function buildAiAssistedAnalysis(
         `Order likely: ${analysisWithoutReplies.orderLikely}`,
         `Missing fields: ${analysisWithoutReplies.order.missingFields.join(", ") || "none"}`,
         `Order summary: ${analysisWithoutReplies.order.summary}`,
+        `Food/order relevant current chat: ${foodBusinessRelevant}`,
         `Repeat-order phrasing detected: ${repeatOrderPhrasingDetected}`,
         menuContext,
         brandStyleContext,
         customerMemoryContext,
         "Use brand style for wording only. Do not let style override missing-field safety, product facts, or payment rules.",
         "Use customer memory only as advisory wording. Do not mark address, items, or timing complete unless the current chat confirms them.",
+        "Do not introduce products, prices, customizations, or memory preferences unless the current chat mentions them or repeat-order memory is being confirmed.",
+        "If Food/order relevant current chat is false, avoid order/menu/payment suggestions and return only a neutral clarification reply.",
         "If repeat-order phrasing is detected and customer memory has a usual item, preference, or usual address, ask the customer to confirm those remembered details.",
         "Chat text:",
         text
