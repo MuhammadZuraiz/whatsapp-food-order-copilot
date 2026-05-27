@@ -4,8 +4,8 @@
  *
  * SAFETY CONTRACT:
  *  - This adapter ONLY fills the compose box.
- *  - It does NOT press Enter, click Send, submit forms, or auto-send anything.
- *  - execCommand is used only for insertText fallback paths. It never sends, submits, presses Enter, or clicks Send.
+ *  - It does NOT press the send key, click Send, submit forms, or auto-send anything.
+ *  - execCommand is used only for insertText fallback paths. It never sends, submits, uses the send key, or clicks Send.
  *  - Replacement uses a synthetic ClipboardEvent (paste) that goes through
  *    React's own event handler so React updates its internal state correctly.
  */

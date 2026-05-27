@@ -8,6 +8,15 @@ type WfoChromeRuntimeError = {
   message?: string;
 };
 
+type WfoChromeStorageArea = {
+  get: (
+    keys: string | string[] | Record<string, unknown> | null,
+    callback: (items: Record<string, unknown>) => void
+  ) => void;
+  set: (items: Record<string, unknown>, callback?: () => void) => void;
+  remove: (keys: string | string[], callback?: () => void) => void;
+};
+
 declare const chrome: {
   runtime: {
     lastError?: WfoChromeRuntimeError;
@@ -31,5 +40,9 @@ declare const chrome: {
       message: unknown,
       callback: (response: unknown) => void
     ) => void;
+  };
+  storage?: {
+    local?: WfoChromeStorageArea;
+    session?: WfoChromeStorageArea;
   };
 };

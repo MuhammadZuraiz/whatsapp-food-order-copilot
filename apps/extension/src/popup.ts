@@ -15,6 +15,73 @@ type PopupCaptureFailure = {
 
 type PopupCaptureResponse = PopupCaptureSuccess | PopupCaptureFailure;
 
+type PopupFingerprintSuccess = {
+  ok: true;
+  chatName: string;
+  messageCount: number;
+  adapterVersion: string;
+  firstLines: string[];
+  lastLines: string[];
+  fingerprint: string;
+  warnings: string[];
+};
+
+type PopupFingerprintFailure = {
+  ok: false;
+  error: string;
+  adapterVersion: string;
+};
+
+type PopupFingerprintResponse =
+  | PopupFingerprintSuccess
+  | PopupFingerprintFailure;
+
+type AnalysisSession = {
+  sessionId: string;
+  analyzedAt: string;
+  tabId: number;
+  tabUrl: string;
+  chatName: string;
+  messageCount: number;
+  adapterVersion: string;
+  firstCapturedLines: string[];
+  lastCapturedLines: string[];
+  fingerprint: string;
+  warningFlags: string[];
+};
+
+type CapturedPreview = {
+  chatName: string;
+  messageCount: number;
+  adapterVersion: string;
+  firstLines: string[];
+  lastLines: string[];
+  fingerprint: string;
+  warnings: string[];
+};
+
+type SessionStatus =
+  | {
+      state: "unknown";
+      message: string;
+    }
+  | {
+      state: "current";
+      message: string;
+    }
+  | {
+      state: "stale";
+      message: string;
+    }
+  | {
+      state: "different";
+      message: string;
+    }
+  | {
+      state: "error";
+      message: string;
+    };
+
 type PopupInsertSuccess = {
   ok: true;
   insertedLength: number;
@@ -111,12 +178,27 @@ type AnalyzerResponse = {
   };
 };
 
+type StoredAnalysisSnapshot = {
+  analysisSession: AnalysisSession;
+  analysisResult: AnalyzerResponse;
+  capturedPreview: CapturedPreview;
+  businessSenderNames: string[];
+  useAi: boolean;
+  savedAt: string;
+};
+
 const apiBaseUrl = "http://localhost:4000";
 const defaultBusinessSenderNames = "My Business, Business, You";
+const lastAnalysisStorageKey = "wfo-last-analysis";
 
 let activeTab: WfoChromeTab | null = null;
 let apiConnected = false;
 let lastCaptureWarnings: string[] = [];
+let analysisSession: AnalysisSession | null = null;
+let sessionStatus: SessionStatus = {
+  state: "unknown",
+  message: "Analyze the current chat before inserting."
+};
 
 function parseBusinessSenderNames(value: string) {
   return value
@@ -162,6 +244,323 @@ function setStatus(selector: string, ok: boolean, text: string) {
   element.className = `status-pill ${statusClass(ok)}`;
 }
 
+function normalizeSessionLine(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function fingerprintSessionLine(value: string) {
+  return normalizeSessionLine(value)
+    .replace(
+      /^\[?\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\]?\s*-\s*/i,
+      ""
+    )
+    .toLocaleLowerCase();
+}
+
+function captureLines(rawText: string) {
+  return rawText
+    .split("\n")
+    .map(normalizeSessionLine)
+    .filter(Boolean);
+}
+
+function buildSessionFingerprint(
+  chatName: string,
+  messageCount: number,
+  lastLines: string[]
+) {
+  return [chatName, String(messageCount), ...lastLines]
+    .map((part, index) =>
+      index < 2 ? normalizeSessionLine(part).toLocaleLowerCase() : fingerprintSessionLine(part)
+    )
+    .join("::");
+}
+
+function sameLines(left: string[], right: string[]) {
+  return (
+    left.length === right.length &&
+    left.every(
+      (line, index) =>
+        fingerprintSessionLine(line) === fingerprintSessionLine(right[index] ?? "")
+    )
+  );
+}
+
+function createSessionId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function createAnalysisSession(
+  capture: PopupCaptureSuccess,
+  tab: WfoChromeTab
+): AnalysisSession {
+  const lines = captureLines(capture.rawText);
+  const firstCapturedLines = lines.slice(0, 2);
+  const lastCapturedLines = lines.slice(-2);
+
+  return {
+    sessionId: createSessionId(),
+    analyzedAt: new Date().toISOString(),
+    tabId: tab.id ?? 0,
+    tabUrl: tab.url ?? "",
+    chatName: capture.chatName,
+    messageCount: capture.messageCount,
+    adapterVersion: capture.adapterVersion,
+    firstCapturedLines,
+    lastCapturedLines,
+    fingerprint: buildSessionFingerprint(
+      capture.chatName,
+      capture.messageCount,
+      lastCapturedLines
+    ),
+    warningFlags: capture.warnings
+  };
+}
+
+function formatSessionTime(value: string) {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function previewText(value: string, maxLength = 90) {
+  const cleaned = normalizeSessionLine(value);
+  return cleaned.length > maxLength
+    ? `${cleaned.slice(0, maxLength)}...`
+    : cleaned;
+}
+
+function recordExtensionAction(
+  action: string,
+  details: {
+    chatName?: string;
+    preview?: string;
+  } = {}
+) {
+  try {
+    const key = "wfo-extension-action-history";
+    const existing = JSON.parse(localStorage.getItem(key) ?? "[]") as unknown[];
+    const next = [
+      {
+        action,
+        at: new Date().toISOString(),
+        chatName: details.chatName ?? analysisSession?.chatName ?? null,
+        preview: details.preview ? previewText(details.preview, 100) : null
+      },
+      ...existing
+    ].slice(0, 10);
+
+    localStorage.setItem(key, JSON.stringify(next));
+  } catch {
+    // Local action history is best-effort only.
+  }
+}
+
+function createCapturedPreview(capture: PopupCaptureSuccess): CapturedPreview {
+  const lines = captureLines(capture.rawText);
+  const lastFingerprintLines = lines.slice(-2);
+
+  return {
+    chatName: capture.chatName,
+    messageCount: capture.messageCount,
+    adapterVersion: capture.adapterVersion,
+    firstLines: lines.slice(0, 2),
+    lastLines: lines.slice(-3),
+    fingerprint: buildSessionFingerprint(
+      capture.chatName,
+      capture.messageCount,
+      lastFingerprintLines
+    ),
+    warnings: capture.warnings
+  };
+}
+
+function compactAnalyzerResult(result: AnalyzerResponse): AnalyzerResponse {
+  const analysis = result.analysis;
+
+  return {
+    analysis: {
+      source: analysis.source,
+      customerSummary: analysis.customerSummary ?? null,
+      customerMemoryUsed: analysis.customerMemoryUsed ?? false,
+      customerMemorySummary: analysis.customerMemorySummary ?? null,
+      intent: analysis.intent,
+      orderLikely: analysis.orderLikely,
+      order: {
+        summary: analysis.order.summary,
+        missingFields: analysis.order.missingFields.slice(0, 12)
+      },
+      suggestedReplies: analysis.suggestedReplies.slice(0, 3).map((reply) => ({
+        text: reply.text,
+        type: reply.type,
+        reason: reply.reason
+      })),
+      warnings: analysis.warnings.slice(0, 12)
+    }
+  };
+}
+
+function createStoredAnalysisSnapshot(
+  session: AnalysisSession,
+  result: AnalyzerResponse,
+  preview: CapturedPreview,
+  businessSenderNames: string[],
+  useAi: boolean
+): StoredAnalysisSnapshot {
+  return {
+    analysisSession: session,
+    analysisResult: compactAnalyzerResult(result),
+    capturedPreview: preview,
+    businessSenderNames,
+    useAi,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isStoredAnalysisSnapshot(value: unknown): value is StoredAnalysisSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const session = value.analysisSession;
+  const result = value.analysisResult;
+  const preview = value.capturedPreview;
+
+  return (
+    isRecord(session) &&
+    isRecord(result) &&
+    isRecord((result as { analysis?: unknown }).analysis) &&
+    isRecord(preview) &&
+    typeof session.chatName === "string" &&
+    typeof session.fingerprint === "string" &&
+    typeof preview.chatName === "string"
+  );
+}
+
+function storageArea(name: "session" | "local") {
+  return chrome.storage?.[name] ?? null;
+}
+
+function readStorage(
+  area: WfoChromeStorageArea,
+  key: string
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    area.get(key, (items) => {
+      const error = chrome.runtime.lastError;
+
+      if (error?.message) {
+        reject(new Error(error.message));
+        return;
+      }
+
+      resolve(items[key]);
+    });
+  });
+}
+
+function writeStorage(
+  area: WfoChromeStorageArea,
+  key: string,
+  value: unknown
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    area.set({ [key]: value }, () => {
+      const error = chrome.runtime.lastError;
+
+      if (error?.message) {
+        reject(new Error(error.message));
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+function removeStorage(
+  area: WfoChromeStorageArea,
+  key: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    area.remove(key, () => {
+      const error = chrome.runtime.lastError;
+
+      if (error?.message) {
+        reject(new Error(error.message));
+        return;
+      }
+
+      resolve();
+    });
+  });
+}
+
+async function loadSavedAnalysisSnapshot() {
+  const sessionArea = storageArea("session");
+  const localArea = storageArea("local");
+
+  if (sessionArea) {
+    const value = await readStorage(sessionArea, lastAnalysisStorageKey).catch(
+      () => null
+    );
+
+    if (isStoredAnalysisSnapshot(value)) {
+      return value;
+    }
+  }
+
+  if (localArea) {
+    const value = await readStorage(localArea, lastAnalysisStorageKey).catch(
+      () => null
+    );
+
+    if (isStoredAnalysisSnapshot(value)) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+async function saveAnalysisSnapshot(snapshot: StoredAnalysisSnapshot) {
+  const sessionArea = storageArea("session");
+  const localArea = storageArea("local");
+
+  if (sessionArea) {
+    try {
+      await writeStorage(sessionArea, lastAnalysisStorageKey, snapshot);
+
+      if (localArea) {
+        await removeStorage(localArea, lastAnalysisStorageKey).catch(
+          () => undefined
+        );
+      }
+
+      return;
+    } catch {
+      // Fall back to local storage if session storage is not usable.
+    }
+  }
+
+  if (localArea) {
+    await writeStorage(localArea, lastAnalysisStorageKey, snapshot);
+  }
+}
+
+async function clearSavedAnalysisSnapshot() {
+  const removals = [storageArea("session"), storageArea("local")]
+    .filter((area): area is WfoChromeStorageArea => Boolean(area))
+    .map((area) => removeStorage(area, lastAnalysisStorageKey).catch(() => undefined));
+
+  await Promise.all(removals);
+}
+
 function queryActiveTab() {
   return new Promise<WfoChromeTab | null>((resolve) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -187,6 +586,28 @@ function sendCaptureMessage(tabId: number, businessSenderNames: string[]) {
         }
 
         resolve(response as PopupCaptureResponse);
+      }
+    );
+  });
+}
+
+function sendFingerprintMessage(tabId: number, businessSenderNames: string[]) {
+  return new Promise<PopupFingerprintResponse>((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      {
+        type: "GET_CURRENT_WHATSAPP_CHAT_FINGERPRINT",
+        businessSenderNames
+      },
+      (response) => {
+        const error = chrome.runtime.lastError;
+
+        if (error?.message) {
+          reject(new Error(error.message));
+          return;
+        }
+
+        resolve(response as PopupFingerprintResponse);
       }
     );
   });
@@ -252,6 +673,86 @@ function updateAnalyzeButton() {
   button.disabled = !apiConnected || !isWhatsAppTab(activeTab);
 }
 
+function sessionAllowsInsert() {
+  return Boolean(analysisSession && sessionStatus.state === "current");
+}
+
+function sessionStatusClass() {
+  return sessionStatus.state === "current" ? "status-ok" : "status-error";
+}
+
+function renderAnalysisSession() {
+  const container = document.querySelector<HTMLElement>("#session-panel");
+
+  if (!container) {
+    return;
+  }
+
+  if (!analysisSession) {
+    container.innerHTML = "";
+    updateInsertButtonState();
+    return;
+  }
+
+  const lastLine = analysisSession.lastCapturedLines.at(-1) ?? "none";
+
+  container.innerHTML = `
+    <section class="panel session-panel">
+      <h2>Last Analysis</h2>
+      <dl class="preview-meta">
+        <div><dt>Chat</dt><dd>${escapeHtml(analysisSession.chatName)}</dd></div>
+        <div><dt>Analyzed</dt><dd>${escapeHtml(
+          formatSessionTime(analysisSession.analyzedAt)
+        )}</dd></div>
+        <div><dt>Messages</dt><dd>${analysisSession.messageCount}</dd></div>
+        <div><dt>Adapter</dt><dd>${escapeHtml(
+          analysisSession.adapterVersion
+        )}</dd></div>
+        <div><dt>Status</dt><dd><span class="session-status ${sessionStatusClass()}">${escapeHtml(
+          sessionStatus.message
+        )}</span></dd></div>
+      </dl>
+      <p class="session-last-line"><strong>Last captured:</strong> ${escapeHtml(
+        previewText(lastLine)
+      )}</p>
+      <div class="session-actions">
+        <button id="recheck-session-button" class="secondary" type="button">
+          Re-check current chat
+        </button>
+        <button id="reanalyze-session-button" class="secondary" type="button">
+          Re-analyze current chat
+        </button>
+        <button id="clear-session-button" class="secondary" type="button">
+          Clear saved analysis
+        </button>
+      </div>
+    </section>
+  `;
+
+  container
+    .querySelector<HTMLButtonElement>("#recheck-session-button")
+    ?.addEventListener("click", () => {
+      void recheckSessionStatus();
+    });
+  container
+    .querySelector<HTMLButtonElement>("#reanalyze-session-button")
+    ?.addEventListener("click", () => {
+      void analyzeCurrentChat();
+    });
+  container
+    .querySelector<HTMLButtonElement>("#clear-session-button")
+    ?.addEventListener("click", () => {
+      void clearSavedAnalysis();
+    });
+
+  updateInsertButtonState();
+}
+
+function setSessionStatus(status: SessionStatus) {
+  sessionStatus = status;
+  renderAnalysisSession();
+}
+
 function renderWarnings(warnings: string[]) {
   const container = getElement("#warnings");
 
@@ -268,43 +769,229 @@ function renderWarnings(warnings: string[]) {
   `;
 }
 
-function renderCapturePreview(capture: PopupCaptureSuccess | null) {
+function renderCapturePreview(preview: CapturedPreview | null) {
   const container = getElement("#capture-preview");
 
-  if (!capture) {
+  if (!preview) {
     container.innerHTML = "";
     return;
   }
 
-  const lines = capture.rawText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const firstLines = lines.slice(0, 2);
-  const lastLines = lines.slice(-3);
   const previewLines =
-    lines.length <= 5
-      ? lines
-      : [...firstLines, "...", ...lastLines];
+    preview.messageCount <= preview.lastLines.length
+      ? preview.lastLines
+      : preview.messageCount <= 5
+        ? [
+            ...preview.firstLines,
+            ...preview.lastLines.filter(
+              (line) => !preview.firstLines.includes(line)
+            )
+          ]
+        : [...preview.firstLines, "...", ...preview.lastLines];
 
   container.innerHTML = `
     <section class="panel preview-panel">
       <h2>Captured Chat Preview</h2>
       <dl class="preview-meta">
-        <div><dt>Chat</dt><dd>${escapeHtml(capture.chatName)}</dd></div>
-        <div><dt>Messages</dt><dd>${capture.messageCount}</dd></div>
-        <div><dt>Adapter</dt><dd>${escapeHtml(capture.adapterVersion)}</dd></div>
+        <div><dt>Chat</dt><dd>${escapeHtml(preview.chatName)}</dd></div>
+        <div><dt>Messages</dt><dd>${preview.messageCount}</dd></div>
+        <div><dt>Adapter</dt><dd>${escapeHtml(preview.adapterVersion)}</dd></div>
       </dl>
       <pre>${previewLines.map(escapeHtml).join("\n")}</pre>
       ${
-        capture.warnings.length > 0
-          ? `<ul class="preview-warnings">${capture.warnings
+        preview.warnings.length > 0
+          ? `<ul class="preview-warnings">${preview.warnings
               .map((warning) => `<li>${escapeHtml(warning)}</li>`)
               .join("")}</ul>`
           : ""
       }
     </section>
   `;
+}
+
+async function clearSavedAnalysis() {
+  await clearSavedAnalysisSnapshot();
+  analysisSession = null;
+  sessionStatus = {
+    state: "unknown",
+    message: "Analyze the current chat before inserting."
+  };
+  lastCaptureWarnings = [];
+  renderCapturePreview(null);
+  renderAnalysisSession();
+  renderWarnings([]);
+  getElement("#result").innerHTML = "";
+  setText("#activity", "Saved analysis cleared. Analyze the current chat before inserting.");
+}
+
+async function restoreSavedAnalysis() {
+  const snapshot = await loadSavedAnalysisSnapshot();
+
+  if (!snapshot) {
+    return;
+  }
+
+  analysisSession = snapshot.analysisSession;
+  lastCaptureWarnings =
+    snapshot.capturedPreview.warnings ?? snapshot.analysisSession.warningFlags;
+  sessionStatus = {
+    state: "unknown",
+    message: "Checking current chat..."
+  };
+
+  const senderInput =
+    document.querySelector<HTMLInputElement>("#business-sender-names");
+  const useAiInput = document.querySelector<HTMLInputElement>("#use-ai");
+
+  if (senderInput && snapshot.businessSenderNames.length > 0) {
+    senderInput.value = snapshot.businessSenderNames.join(", ");
+  }
+
+  if (useAiInput) {
+    useAiInput.checked = snapshot.useAi;
+  }
+
+  renderCapturePreview(snapshot.capturedPreview);
+  renderAnalysisSession();
+  renderResult(snapshot.analysisResult);
+  setText(
+    "#activity",
+    `Restored last analysis for ${snapshot.analysisSession.chatName}.`
+  );
+
+  await recheckSessionStatus();
+}
+
+function compareFingerprint(
+  session: AnalysisSession,
+  current: PopupFingerprintSuccess
+): SessionStatus {
+  if (current.chatName !== session.chatName) {
+    return {
+      state: "different",
+      message: "Different chat - re-analyze required."
+    };
+  }
+
+  if (current.adapterVersion !== session.adapterVersion) {
+    return {
+      state: "stale",
+      message: "Adapter changed - re-analyze required."
+    };
+  }
+
+  if (current.messageCount !== session.messageCount) {
+    return {
+      state: "stale",
+      message: "Visible messages changed - re-analyze required."
+    };
+  }
+
+  if (current.fingerprint !== session.fingerprint) {
+    return {
+      state: "stale",
+      message: "Chat fingerprint changed - re-analyze required."
+    };
+  }
+
+  if (
+    !sameLines(current.firstLines, session.firstCapturedLines) ||
+    !sameLines(current.lastLines, session.lastCapturedLines)
+  ) {
+    return {
+      state: "stale",
+      message: "Visible chat preview changed - re-analyze required."
+    };
+  }
+
+  return {
+    state: "current",
+    message: "Current"
+  };
+}
+
+async function getCurrentFingerprintForSession() {
+  const session = analysisSession;
+
+  if (!session) {
+    throw new Error("Analyze the current chat before inserting.");
+  }
+
+  const tab = await queryActiveTab();
+
+  if (!tab?.id || !isWhatsAppTab(tab)) {
+    throw new Error("Open web.whatsapp.com and select the analyzed chat before inserting.");
+  }
+
+  if (tab.id !== session.tabId || tab.url !== session.tabUrl) {
+    throw new Error("This result belongs to a different tab or page. Re-analyze before inserting.");
+  }
+
+  const businessSenderNames = parseBusinessSenderNames(
+    getElement<HTMLInputElement>("#business-sender-names").value
+  );
+  const current = await sendFingerprintMessage(tab.id, businessSenderNames);
+
+  if (!current.ok) {
+    throw new Error(current.error);
+  }
+
+  return current;
+}
+
+async function recheckSessionStatus() {
+  if (!analysisSession) {
+    setSessionStatus({
+      state: "unknown",
+      message: "Analyze the current chat before inserting."
+    });
+    return;
+  }
+
+  try {
+    const current = await getCurrentFingerprintForSession();
+    const nextStatus = compareFingerprint(analysisSession, current);
+    setSessionStatus(nextStatus);
+
+    if (nextStatus.state !== "current") {
+      recordExtensionAction("blocked stale insert", {
+        preview: nextStatus.message
+      });
+      setInsertStatus(
+        "This result belongs to a different or changed chat. Re-analyze before inserting.",
+        false
+      );
+    } else {
+      setInsertStatus("Analysis session matches the current visible chat.", true);
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Could not check the current chat.";
+    setSessionStatus({
+      state: "error",
+      message
+    });
+    setInsertStatus(message, false);
+  }
+}
+
+async function assertCurrentAnalysisSession() {
+  if (!analysisSession) {
+    throw new Error("Analyze the current chat before inserting.");
+  }
+
+  const current = await getCurrentFingerprintForSession();
+  const nextStatus = compareFingerprint(analysisSession, current);
+  setSessionStatus(nextStatus);
+
+  if (nextStatus.state !== "current") {
+    recordExtensionAction("blocked stale insert", {
+      preview: nextStatus.message
+    });
+    throw new Error(
+      "This result belongs to a different or changed chat. Re-analyze before inserting."
+    );
+  }
 }
 
 function hasGeneralChatWarning(analysis: AnalyzerResponse["analysis"]) {
@@ -320,7 +1007,8 @@ function updateInsertButtonState() {
 
   for (const button of document.querySelectorAll<HTMLButtonElement>(".insert-button")) {
     button.disabled =
-      button.dataset.generalChat === "true" && !allowGeneralInsert;
+      !sessionAllowsInsert() ||
+      (button.dataset.generalChat === "true" && !allowGeneralInsert);
   }
 }
 
@@ -466,6 +1154,8 @@ async function insertSuggestedReply(
       throw new Error("Open web.whatsapp.com and select a chat before inserting.");
     }
 
+    await assertCurrentAnalysisSession();
+
     if (hasGeneralChatWarning(analysis)) {
       const allowed = getElement<HTMLInputElement>(
         "#allow-general-insert"
@@ -502,6 +1192,9 @@ async function insertSuggestedReply(
       "Reply inserted into WhatsApp input. Review it before sending manually.",
       true
     );
+    recordExtensionAction(forceReplace ? "replaced draft" : "inserted reply", {
+      preview: reply.text
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Could not insert this reply.";
@@ -599,6 +1292,9 @@ function renderResult(result: AnalyzerResponse) {
 
       try {
         await navigator.clipboard.writeText(reply.text);
+        recordExtensionAction("copied reply", {
+          preview: reply.text
+        });
         button.textContent = "Copied";
         window.setTimeout(() => {
           button.textContent = "Copy Reply";
@@ -638,24 +1334,34 @@ async function analyzeCurrentChat() {
   const useAi = getElement<HTMLInputElement>("#use-ai").checked;
 
   getElement("#result").innerHTML = "";
+  analysisSession = null;
+  sessionStatus = {
+    state: "unknown",
+    message: "Analyze the current chat before inserting."
+  };
+  renderAnalysisSession();
   renderCapturePreview(null);
   renderWarnings([]);
   setText("#activity", "Capturing visible WhatsApp chat...");
   analyzeButton.disabled = true;
 
   try {
-    if (!activeTab?.id || !isWhatsAppTab(activeTab)) {
+    const tab = await queryActiveTab();
+    activeTab = tab;
+
+    if (!tab?.id || !isWhatsAppTab(tab)) {
       throw new Error("Open web.whatsapp.com and select a chat before analyzing.");
     }
 
-    const capture = await sendCaptureMessage(activeTab.id, businessSenderNames);
+    const capture = await sendCaptureMessage(tab.id, businessSenderNames);
 
     if (!capture.ok) {
       throw new Error(capture.error);
     }
 
-    lastCaptureWarnings = capture.warnings;
-    renderCapturePreview(capture);
+    const capturedPreview = createCapturedPreview(capture);
+    lastCaptureWarnings = capturedPreview.warnings;
+    renderCapturePreview(capturedPreview);
     setText(
       "#activity",
       `Captured ${capture.messageCount} visible message(s) from ${capture.chatName}. Analyzing...`
@@ -678,11 +1384,35 @@ async function analyzeCurrentChat() {
       throw new Error(`Analyzer request failed with status ${response.status}.`);
     }
 
-    const result = (await response.json()) as AnalyzerResponse;
+    const result = compactAnalyzerResult((await response.json()) as AnalyzerResponse);
+    analysisSession = createAnalysisSession(capture, tab);
+    sessionStatus = {
+      state: "current",
+      message: "Current"
+    };
+    await saveAnalysisSnapshot(
+      createStoredAnalysisSnapshot(
+        analysisSession,
+        result,
+        capturedPreview,
+        businessSenderNames,
+        useAi
+      )
+    ).catch((error) => {
+      console.warn(
+        "[WFO Copilot] Could not save last analysis snapshot.",
+        error instanceof Error ? error.message : error
+      );
+    });
+    recordExtensionAction("analyzed chat", {
+      chatName: capture.chatName,
+      preview: analysisSession.lastCapturedLines.at(-1) ?? ""
+    });
     setText(
       "#activity",
       "Analysis complete. Copy a suggested reply or insert it for manual review."
     );
+    renderAnalysisSession();
     renderResult(result);
   } catch (error) {
     lastCaptureWarnings = [];
@@ -701,7 +1431,7 @@ function renderApp() {
   app.innerHTML = `
     <main class="popup">
       <div>
-        <span class="badge">Milestone 8B</span>
+        <span class="badge">Milestone 8C.1</span>
         <h1 class="title">Food Order Copilot</h1>
       </div>
 
@@ -724,6 +1454,7 @@ function renderApp() {
       <p id="activity" class="activity">Open a WhatsApp chat, then analyze visible messages.</p>
 
       <div id="capture-preview"></div>
+      <div id="session-panel"></div>
       <div id="warnings"></div>
       <div id="result"></div>
     </main>
@@ -737,6 +1468,11 @@ function renderApp() {
   );
 }
 
-renderApp();
-void checkApiHealth();
-void checkCurrentPage();
+async function initializePopup() {
+  renderApp();
+  renderAnalysisSession();
+  await Promise.all([checkApiHealth(), checkCurrentPage()]);
+  await restoreSavedAnalysis();
+}
+
+void initializePopup();

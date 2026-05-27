@@ -22,6 +22,6 @@
       "run_at": "document_idle"
     }
   ],
-  "permissions": ["activeTab", "clipboardWrite"],
+  "permissions": ["activeTab", "clipboardWrite", "storage"],
   "host_permissions": ["http://localhost:4000/*", "https://web.whatsapp.com/*"]
 }

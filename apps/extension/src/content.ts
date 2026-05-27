@@ -9,13 +9,20 @@ type InsertReplyIntoWhatsAppComposerMessage = {
   forceReplace?: boolean;
 };
 
+type GetCurrentWhatsAppChatFingerprintMessage = {
+  type: "GET_CURRENT_WHATSAPP_CHAT_FINGERPRINT";
+  businessSenderNames?: string[];
+};
+
 type ContentMessage =
   | CaptureCurrentWhatsAppChatMessage
-  | InsertReplyIntoWhatsAppComposerMessage;
+  | InsertReplyIntoWhatsAppComposerMessage
+  | GetCurrentWhatsAppChatFingerprintMessage;
 
 type ContentAdapterGlobal = typeof globalThis & {
   WfoWhatsAppDomAdapter?: {
     captureCurrentChat: (businessSenderNames?: string[]) => unknown;
+    getCurrentChatFingerprint?: (businessSenderNames?: string[]) => unknown;
     version: string;
   };
   WfoWhatsAppComposerAdapter?: {
@@ -39,12 +46,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (
     contentMessage.type !== "CAPTURE_CURRENT_WHATSAPP_CHAT" &&
-    contentMessage.type !== "INSERT_REPLY_INTO_WHATSAPP_COMPOSER"
+    contentMessage.type !== "INSERT_REPLY_INTO_WHATSAPP_COMPOSER" &&
+    contentMessage.type !== "GET_CURRENT_WHATSAPP_CHAT_FINGERPRINT"
   ) {
     return false;
   }
 
-  if (contentMessage.type === "CAPTURE_CURRENT_WHATSAPP_CHAT") {
+  if (
+    contentMessage.type === "CAPTURE_CURRENT_WHATSAPP_CHAT" ||
+    contentMessage.type === "GET_CURRENT_WHATSAPP_CHAT_FINGERPRINT"
+  ) {
     const currentAdapter = (globalThis as ContentAdapterGlobal)
       .WfoWhatsAppDomAdapter;
 
@@ -54,6 +65,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         error: "WhatsApp adapter was not loaded. Rebuild and reload the extension.",
         adapterVersion: "unavailable"
       });
+      return true;
+    }
+
+    if (contentMessage.type === "GET_CURRENT_WHATSAPP_CHAT_FINGERPRINT") {
+      if (!currentAdapter.getCurrentChatFingerprint) {
+        sendResponse({
+          ok: false,
+          error: "WhatsApp fingerprint adapter was not loaded. Rebuild and reload the extension.",
+          adapterVersion: currentAdapter.version
+        });
+        return true;
+      }
+
+      sendResponse(
+        currentAdapter.getCurrentChatFingerprint(
+          contentMessage.businessSenderNames ?? []
+        )
+      );
       return true;
     }
 

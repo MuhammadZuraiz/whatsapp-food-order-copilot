@@ -2,7 +2,7 @@
 
 Local-first project foundation for a WhatsApp Business food-order assistant.
 
-This repository currently includes the Milestone 8B foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, menu/product knowledge, historical chat import, brand style learning, customer memory, and an internal Chrome extension bridge for manually analyzing the currently open WhatsApp Web chat and manually inserting selected replies into the compose box.
+This repository currently includes the Milestone 8C.1 foundation: the monorepo, app boundaries, shared TypeScript package, health endpoint, local SQLite database layer with Prisma, a manual chat analyzer for pasted WhatsApp exports, an optional AI-assisted analyzer path with a rule-based fallback, menu/product knowledge, historical chat import, brand style learning, customer memory, and an internal Chrome extension bridge for manually analyzing the currently open WhatsApp Web chat and manually inserting selected replies into the compose box with stale-chat protection across popup reopens.
 
 ## What Is Included
 
@@ -180,7 +180,7 @@ After building, load `apps/extension/dist` as an unpacked extension in Chrome.
 
 ## Chrome Extension Bridge
 
-Milestone 8B includes an internal-use Chrome extension bridge for WhatsApp Web. The extension reads only the currently open visible chat when you click `Analyze Current Chat`. It sends the captured text to the local API at `http://localhost:4000/api/chat/analyze-manual`; the extension never talks directly to Groq/OpenAI-compatible providers.
+Milestone 8C.1 includes an internal-use Chrome extension bridge for WhatsApp Web. The extension reads only the currently open visible chat when you click `Analyze Current Chat`. It sends the captured text to the local API at `http://localhost:4000/api/chat/analyze-manual`; the extension never talks directly to Groq/OpenAI-compatible providers.
 
 Use it like this:
 
@@ -199,7 +199,7 @@ Then:
 6. Open one chat.
 7. Click the extension icon.
 8. Click `Analyze Current Chat`.
-9. Review the captured chat preview, order summary, and suggested replies.
+9. Review the captured chat preview, analysis session status, order summary, and suggested replies.
 10. Click `Copy Reply` to copy a suggestion, or click `Insert Reply` to place it into the WhatsApp compose box.
 11. Review the inserted text in WhatsApp.
 12. Press Send manually in WhatsApp only if you choose to send it.
@@ -210,6 +210,11 @@ Extension limitations:
 - Does not scroll or load older chat history.
 - Does not open, search, or scan other chats.
 - `Insert Reply` fills the WhatsApp text box only after a user click.
+- Insert is protected by an analysis-session check. If you switch chats, the visible messages change, or the adapter version changes after analysis, insertion is blocked until you click `Analyze Current Chat` again.
+- The popup restores the last compact analysis after it is closed and reopened. It stores only the chat name, message counts, first/last preview lines, fingerprint, warnings, suggested replies, and order summary; it does not store the full raw transcript.
+- Restored results are checked against the currently visible WhatsApp chat before insertion. If the restored result is stale or belongs to a different chat, `Insert Reply` and `Replace Draft` are disabled until you re-analyze.
+- `Copy Reply` still works if a result is stale because it does not touch WhatsApp.
+- `Clear saved analysis` removes the restored popup result from extension storage.
 - Insert never presses Enter and never clicks the Send button.
 - Existing WhatsApp drafts are protected; replacing a non-empty draft requires confirmation.
 - General/unrelated chat replies are copy-only until `Allow inserting general-chat replies` is checked.

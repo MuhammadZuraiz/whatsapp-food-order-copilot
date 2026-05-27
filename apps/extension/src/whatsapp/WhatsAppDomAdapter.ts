@@ -15,9 +15,33 @@ type AdapterCaptureFailure = {
 
 type AdapterCaptureResult = AdapterCaptureSuccess | AdapterCaptureFailure;
 
+type AdapterFingerprintSuccess = {
+  ok: true;
+  chatName: string;
+  messageCount: number;
+  adapterVersion: string;
+  firstLines: string[];
+  lastLines: string[];
+  fingerprint: string;
+  warnings: string[];
+};
+
+type AdapterFingerprintFailure = {
+  ok: false;
+  error: string;
+  adapterVersion: string;
+};
+
+type AdapterFingerprintResult =
+  | AdapterFingerprintSuccess
+  | AdapterFingerprintFailure;
+
 type WhatsAppAdapterGlobal = typeof globalThis & {
   WfoWhatsAppDomAdapter?: {
     captureCurrentChat: (businessSenderNames?: string[]) => AdapterCaptureResult;
+    getCurrentChatFingerprint: (
+      businessSenderNames?: string[]
+    ) => AdapterFingerprintResult;
     version: string;
   };
 };
@@ -205,6 +229,26 @@ function uniqueKey(parts: string[]) {
   return parts.join("::").toLocaleLowerCase();
 }
 
+function linesFromRawText(rawText: string) {
+  return rawText
+    .split("\n")
+    .map((line) => cleanText(line))
+    .filter(Boolean);
+}
+
+function fingerprintLine(value: string) {
+  return cleanText(value)
+    .replace(
+      /^\[?\d{1,2}\/\d{1,2}\/\d{2,4},\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\]?\s*-\s*/i,
+      ""
+    )
+    .toLocaleLowerCase();
+}
+
+function buildFingerprint(chatName: string, messageCount: number, lastLines: string[]) {
+  return uniqueKey([chatName, String(messageCount), ...lastLines.map(fingerprintLine)]);
+}
+
 function captureFromMetadata(
   businessSenderNames: string[],
   warnings: string[]
@@ -339,7 +383,33 @@ function captureCurrentChat(
   };
 }
 
+function getCurrentChatFingerprint(
+  businessSenderNames: string[] = []
+): AdapterFingerprintResult {
+  const capture = captureCurrentChat(businessSenderNames);
+
+  if (!capture.ok) {
+    return capture;
+  }
+
+  const lines = linesFromRawText(capture.rawText);
+  const firstLines = lines.slice(0, 2);
+  const lastLines = lines.slice(-2);
+
+  return {
+    ok: true,
+    chatName: capture.chatName,
+    messageCount: capture.messageCount,
+    adapterVersion: capture.adapterVersion,
+    firstLines,
+    lastLines,
+    fingerprint: buildFingerprint(capture.chatName, capture.messageCount, lastLines),
+    warnings: capture.warnings
+  };
+}
+
 (globalThis as WhatsAppAdapterGlobal).WfoWhatsAppDomAdapter = {
   captureCurrentChat,
+  getCurrentChatFingerprint,
   version: WHATSAPP_DOM_ADAPTER_VERSION
 };
