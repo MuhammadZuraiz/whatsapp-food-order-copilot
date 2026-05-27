@@ -159,13 +159,17 @@ export function applySuggestedReplyGrounding(
 
     return {
       ...analysis,
-      suggestedReplies: analysis.suggestedReplies.some(
-        (reply) => !isOrderSpecificReply(reply)
-      )
-        ? analysis.suggestedReplies
-            .filter((reply) => !isOrderSpecificReply(reply))
-            .slice(0, 2)
-        : [neutralReply()],
+      customerSummary: null,
+      customerMemoryUsed: false,
+      customerMemorySummary: null,
+      intent: "general_question",
+      orderLikely: false,
+      order: {
+        ...analysis.order,
+        missingFields: [],
+        summary: "Current visible chat does not appear to contain a food order yet."
+      },
+      suggestedReplies: [neutralReply()],
       warnings
     };
   }

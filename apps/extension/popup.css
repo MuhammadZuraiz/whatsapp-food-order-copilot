@@ -224,6 +224,32 @@ button:disabled {
   line-height: 1.45;
 }
 
+.safety-note {
+  border-left: 3px solid #116149;
+  padding-left: 8px;
+  color: #3f3f46;
+}
+
+.general-insert-toggle {
+  margin-bottom: 8px;
+}
+
+.insert-status {
+  min-height: 0;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.insert-status:not(:empty) {
+  border: 1px solid #d4d4d4;
+  padding: 8px;
+}
+
 .reply-list {
   display: grid;
   gap: 8px;
@@ -244,4 +270,27 @@ button:disabled {
   color: #666666;
   font-size: 11px;
   line-height: 1.35;
+}
+
+.reply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draft-confirmation {
+  margin-top: 8px;
+  border: 1px solid #f4c78a;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fff8eb;
+}
+
+.draft-confirmation p {
+  margin: 0 0 8px;
+}
+
+.draft-preview {
+  overflow-wrap: anywhere;
+  color: #525252;
 }

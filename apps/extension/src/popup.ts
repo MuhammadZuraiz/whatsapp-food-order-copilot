@@ -15,6 +15,79 @@ type PopupCaptureFailure = {
 
 type PopupCaptureResponse = PopupCaptureSuccess | PopupCaptureFailure;
 
+type PopupInsertSuccess = {
+  ok: true;
+  insertedLength: number;
+  matchedSelector?: string;
+  originalDraftPreview?: string;
+  beforeDraftPreview?: string;
+  afterDeletePreview?: string;
+  afterClearPreview?: string;
+  finalDraftPreview?: string;
+  afterDraftPreview?: string;
+  currentDraftPreview?: string;
+  strategy?: string;
+  strategiesTried?: string[];
+  clearSucceeded?: boolean;
+  insertSucceeded?: boolean;
+  selectionInsideComposer?: boolean;
+  deleteCommandResult?: boolean;
+  insertCommandResult?: boolean;
+  restoredOriginal?: boolean;
+  clearedAfterFailure?: boolean;
+  composerTagName?: string;
+  composerRole?: string;
+  composerContentEditable?: string;
+  composerDataTab?: string;
+  composerAriaLabel?: string;
+  composerChildCount?: number;
+  activeElementSummary?: string;
+  selectionAnchorInsideComposer?: boolean;
+  composerAdapterVersion: string;
+};
+
+type PopupInsertFailure = {
+  ok: false;
+  error: string;
+  reason?:
+    | "clear_failed"
+    | "draft_not_empty"
+    | "composer_not_found"
+    | "duplicate_insert_detected"
+    | "insert_failed"
+    | "not_whatsapp"
+    | "selection_failed";
+  currentDraftPreview?: string;
+  originalDraftPreview?: string;
+  beforeDraftPreview?: string;
+  afterDeletePreview?: string;
+  afterClearPreview?: string;
+  finalDraftPreview?: string;
+  afterDraftPreview?: string;
+  matchedSelector?: string;
+  insertedLength?: number;
+  strategy?: string;
+  strategiesTried?: string[];
+  clearSucceeded?: boolean;
+  insertSucceeded?: boolean;
+  selectionInsideComposer?: boolean;
+  deleteCommandResult?: boolean;
+  insertCommandResult?: boolean;
+  restoredOriginal?: boolean;
+  clearedAfterFailure?: boolean;
+  composerTagName?: string;
+  composerRole?: string;
+  composerContentEditable?: string;
+  composerDataTab?: string;
+  composerAriaLabel?: string;
+  composerChildCount?: number;
+  activeElementSummary?: string;
+  selectionAnchorInsideComposer?: boolean;
+  composerAdapterVersion: string;
+};
+
+type PopupInsertResponse = PopupInsertSuccess | PopupInsertFailure;
+
 type SuggestedReply = {
   text: string;
   type: string;
@@ -119,6 +192,33 @@ function sendCaptureMessage(tabId: number, businessSenderNames: string[]) {
   });
 }
 
+function sendInsertMessage(
+  tabId: number,
+  text: string,
+  forceReplace: boolean
+) {
+  return new Promise<PopupInsertResponse>((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      {
+        type: "INSERT_REPLY_INTO_WHATSAPP_COMPOSER",
+        text,
+        forceReplace
+      },
+      (response) => {
+        const error = chrome.runtime.lastError;
+
+        if (error?.message) {
+          reject(new Error(error.message));
+          return;
+        }
+
+        resolve(response as PopupInsertResponse);
+      }
+    );
+  });
+}
+
 async function checkApiHealth() {
   try {
     const response = await fetch(`${apiBaseUrl}/health`);
@@ -207,6 +307,208 @@ function renderCapturePreview(capture: PopupCaptureSuccess | null) {
   `;
 }
 
+function hasGeneralChatWarning(analysis: AnalyzerResponse["analysis"]) {
+  return analysis.warnings.some((warning) =>
+    warning.includes("Current visible chat does not appear to contain a food order yet.")
+  );
+}
+
+function updateInsertButtonState() {
+  const allowGeneralInsert =
+    document.querySelector<HTMLInputElement>("#allow-general-insert")?.checked ??
+    false;
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".insert-button")) {
+    button.disabled =
+      button.dataset.generalChat === "true" && !allowGeneralInsert;
+  }
+}
+
+function setInsertStatus(message: string, ok: boolean) {
+  const container = document.querySelector<HTMLElement>("#insert-status");
+
+  if (!container) {
+    return;
+  }
+
+  container.textContent = message;
+  container.className = ok ? "insert-status status-ok" : "insert-status status-error";
+}
+
+function insertFailureMessage(response: PopupInsertFailure) {
+  return [
+    response.error,
+    response.reason ? `Reason: ${response.reason}` : null,
+    `Adapter: ${response.composerAdapterVersion}`,
+    response.matchedSelector ? `Selector: ${response.matchedSelector}` : null,
+    response.strategy ? `Strategy: ${response.strategy}` : null,
+    response.strategiesTried?.length
+      ? `Strategies tried: ${response.strategiesTried.join(", ")}`
+      : null,
+    response.composerTagName ? `Composer: ${response.composerTagName}` : null,
+    response.composerRole ? `Role: ${response.composerRole}` : null,
+    response.composerContentEditable
+      ? `Contenteditable: ${response.composerContentEditable}`
+      : null,
+    response.composerDataTab ? `Data tab: ${response.composerDataTab}` : null,
+    response.composerAriaLabel
+      ? `Aria label: ${response.composerAriaLabel}`
+      : null,
+    typeof response.composerChildCount === "number"
+      ? `Child count: ${response.composerChildCount}`
+      : null,
+    response.activeElementSummary
+      ? `Active element: ${response.activeElementSummary}`
+      : null,
+    typeof response.selectionAnchorInsideComposer === "boolean"
+      ? `Selection inside composer: ${response.selectionAnchorInsideComposer}`
+      : null,
+    typeof response.selectionInsideComposer === "boolean"
+      ? `Selection scoped to composer: ${response.selectionInsideComposer}`
+      : null,
+    typeof response.deleteCommandResult === "boolean"
+      ? `Delete command result: ${response.deleteCommandResult}`
+      : null,
+    typeof response.insertCommandResult === "boolean"
+      ? `Insert command result: ${response.insertCommandResult}`
+      : null,
+    response.originalDraftPreview
+      ? `Original: ${response.originalDraftPreview}`
+      : null,
+    response.beforeDraftPreview
+      ? `Before: ${response.beforeDraftPreview}`
+      : null,
+    response.afterDeletePreview
+      ? `After delete: ${response.afterDeletePreview}`
+      : null,
+    response.afterClearPreview
+      ? `After clear: ${response.afterClearPreview}`
+      : null,
+    response.finalDraftPreview ? `Final draft: ${response.finalDraftPreview}` : null,
+    response.afterDraftPreview ? `After: ${response.afterDraftPreview}` : null,
+    typeof response.clearSucceeded === "boolean"
+      ? `Clear succeeded: ${response.clearSucceeded}`
+      : null,
+    typeof response.insertSucceeded === "boolean"
+      ? `Insert succeeded: ${response.insertSucceeded}`
+      : null,
+    typeof response.restoredOriginal === "boolean"
+      ? `Restored original: ${response.restoredOriginal}`
+      : null,
+    typeof response.clearedAfterFailure === "boolean"
+      ? `Cleared after failure: ${response.clearedAfterFailure}`
+      : null,
+    response.currentDraftPreview
+      ? `Current draft: ${response.currentDraftPreview}`
+      : null
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function renderDraftConfirmation(
+  reply: SuggestedReply,
+  replyIndex: number,
+  response: PopupInsertFailure,
+  analysis: AnalyzerResponse["analysis"]
+) {
+  const container = document.querySelector<HTMLElement>(
+    `#draft-confirmation-${replyIndex}`
+  );
+
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="draft-confirmation">
+      <p>WhatsApp input already has text. Replace it?</p>
+      ${
+        response.currentDraftPreview
+          ? `<p class="draft-preview">${escapeHtml(response.currentDraftPreview)}</p>`
+          : ""
+      }
+      <div class="reply-actions">
+        <button class="secondary replace-button" data-reply-index="${replyIndex}">
+          Replace Draft
+        </button>
+        <button class="secondary cancel-replace-button" data-reply-index="${replyIndex}">
+          Cancel
+        </button>
+      </div>
+    </div>
+  `;
+
+  container
+    .querySelector<HTMLButtonElement>(".replace-button")
+    ?.addEventListener("click", () => {
+      setInsertStatus("Replacing draft...", true);
+      void insertSuggestedReply(reply, replyIndex, analysis, true);
+    });
+  container
+    .querySelector<HTMLButtonElement>(".cancel-replace-button")
+    ?.addEventListener("click", () => {
+      container.innerHTML = "";
+      setInsertStatus("Draft replacement canceled. Existing WhatsApp text was kept.", true);
+    });
+}
+
+async function insertSuggestedReply(
+  reply: SuggestedReply,
+  replyIndex: number,
+  analysis: AnalyzerResponse["analysis"],
+  forceReplace = false
+) {
+  try {
+    const tab = await queryActiveTab();
+
+    if (!tab?.id || !isWhatsAppTab(tab)) {
+      throw new Error("Open web.whatsapp.com and select a chat before inserting.");
+    }
+
+    if (hasGeneralChatWarning(analysis)) {
+      const allowed = getElement<HTMLInputElement>(
+        "#allow-general-insert"
+      ).checked;
+
+      if (!allowed) {
+        throw new Error(
+          "Insertion is disabled for general chats until you explicitly allow it."
+        );
+      }
+    }
+
+    const response = await sendInsertMessage(tab.id, reply.text, forceReplace);
+
+    if (!response.ok) {
+      if (response.reason === "draft_not_empty") {
+        renderDraftConfirmation(reply, replyIndex, response, analysis);
+        setInsertStatus(insertFailureMessage(response), false);
+        return;
+      }
+
+      throw new Error(insertFailureMessage(response));
+    }
+
+    const confirmation = document.querySelector<HTMLElement>(
+      `#draft-confirmation-${replyIndex}`
+    );
+
+    if (confirmation) {
+      confirmation.innerHTML = "";
+    }
+
+    setInsertStatus(
+      "Reply inserted into WhatsApp input. Review it before sending manually.",
+      true
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Could not insert this reply.";
+    setInsertStatus(message, false);
+  }
+}
+
 function renderError(message: string) {
   getElement("#result").innerHTML = "";
   renderWarnings([message]);
@@ -214,6 +516,7 @@ function renderError(message: string) {
 
 function renderResult(result: AnalyzerResponse) {
   const analysis = result.analysis;
+  const generalChat = hasGeneralChatWarning(analysis);
   const missingFields =
     analysis.order.missingFields.length > 0
       ? analysis.order.missingFields.join(", ")
@@ -238,6 +541,18 @@ function renderResult(result: AnalyzerResponse) {
     </section>
     <section class="panel">
       <h2>Suggested Replies</h2>
+      <p class="safety-note">
+        Insertion only fills the WhatsApp text box. You still review and send manually.
+      </p>
+      ${
+        generalChat
+          ? `<label class="checkbox-field general-insert-toggle">
+              <input id="allow-general-insert" type="checkbox" />
+              <span>Allow inserting general-chat replies</span>
+            </label>`
+          : ""
+      }
+      <div id="insert-status" class="insert-status"></div>
       <div class="reply-list">
         ${analysis.suggestedReplies
           .map(
@@ -247,9 +562,20 @@ function renderResult(result: AnalyzerResponse) {
                 <div class="reply-meta">${escapeHtml(reply.type)} · ${escapeHtml(
                   reply.reason
                 )}</div>
-                <button class="secondary copy-button" data-reply-index="${index}">
-                  Copy Reply
-                </button>
+                <div class="reply-actions">
+                  <button class="secondary copy-button" data-reply-index="${index}">
+                    Copy Reply
+                  </button>
+                  <button
+                    class="secondary insert-button"
+                    data-reply-index="${index}"
+                    data-general-chat="${generalChat}"
+                    ${generalChat ? "disabled" : ""}
+                  >
+                    Insert Reply
+                  </button>
+                </div>
+                <div id="draft-confirmation-${index}"></div>
               </article>
             `
           )
@@ -257,6 +583,10 @@ function renderResult(result: AnalyzerResponse) {
       </div>
     </section>
   `;
+
+  document
+    .querySelector<HTMLInputElement>("#allow-general-insert")
+    ?.addEventListener("change", updateInsertButtonState);
 
   for (const button of document.querySelectorAll<HTMLButtonElement>(".copy-button")) {
     button.addEventListener("click", async () => {
@@ -283,6 +613,20 @@ function renderResult(result: AnalyzerResponse) {
     });
   }
 
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".insert-button")) {
+    button.addEventListener("click", () => {
+      const index = Number(button.dataset.replyIndex);
+      const reply = analysis.suggestedReplies[index];
+
+      if (!reply) {
+        return;
+      }
+
+      void insertSuggestedReply(reply, index, analysis);
+    });
+  }
+
+  updateInsertButtonState();
   renderWarnings([...lastCaptureWarnings, ...analysis.warnings]);
 }
 
@@ -335,7 +679,10 @@ async function analyzeCurrentChat() {
     }
 
     const result = (await response.json()) as AnalyzerResponse;
-    setText("#activity", "Analysis complete. Copy a suggested reply manually.");
+    setText(
+      "#activity",
+      "Analysis complete. Copy a suggested reply or insert it for manual review."
+    );
     renderResult(result);
   } catch (error) {
     lastCaptureWarnings = [];
@@ -354,7 +701,7 @@ function renderApp() {
   app.innerHTML = `
     <main class="popup">
       <div>
-        <span class="badge">Milestone 8A</span>
+        <span class="badge">Milestone 8B</span>
         <h1 class="title">Food Order Copilot</h1>
       </div>
 

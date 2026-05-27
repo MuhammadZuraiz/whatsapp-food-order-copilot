@@ -14,7 +14,11 @@
   "content_scripts": [
     {
       "matches": ["https://web.whatsapp.com/*"],
-      "js": ["src/whatsapp/WhatsAppDomAdapter.js", "src/content.js"],
+      "js": [
+        "src/whatsapp/WhatsAppDomAdapter.js",
+        "src/whatsapp/WhatsAppComposerAdapter.js",
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
